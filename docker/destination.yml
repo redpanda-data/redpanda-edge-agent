@@ -1,0 +1,37 @@
+services:
+  redpanda_destination:
+    command:
+      - redpanda
+      - start
+      - --node-id
+      - '0'
+      - --kafka-addr
+      - 'internal://0.0.0.0:9092,external://redpanda_destination:29092'
+      - --advertise-kafka-addr
+      - 'internal://redpanda_destination:9092,external://127.0.0.1:29092'
+      - --pandaproxy-addr
+      - 'internal://0.0.0.0:8082,external://redpanda_destination:28082'
+      - --advertise-pandaproxy-addr
+      - 'internal://redpanda_destination:8082,external://127.0.0.1:28082'
+      - --schema-registry-addr
+      - 'redpanda_destination:28081'
+      - --rpc-addr
+      - 'redpanda_destination:33145'
+      - --advertise-rpc-addr
+      - 'redpanda_destination:33145'
+      - --smp
+      - '1'
+      - --memory
+      - '512M'
+      - --reserve-memory
+      - '0M'
+      - --overprovisioned
+      - --check=false
+      - --default-log-level=info
+    image: 'docker.vectorized.io/vectorized/redpanda:v22.1.3'
+    container_name: 'redpanda_destination'    
+    ports:
+      - 28081:28081 # Schema registry port
+      - 28082:28082 # Pandaproxy port
+      - 29092:29092 # Kafka API port
+      - 29644:9644  # Prometheus and HTTP admin port
