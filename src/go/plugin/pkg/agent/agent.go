@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"log"
 	"math"
 	"os"
 	"strings"
@@ -16,6 +15,7 @@ import (
 
 	"io/ioutil"
 
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,15 +60,15 @@ func defaultID() string {
 	if err != nil {
 		log.Fatalf("Unable to get hostname from kernel. Set Id in config")
 	}
-	log.Printf("Hostname: %s", hostname)
+	log.Debugf("Hostname: %s", hostname)
 	return hostname
 }
 
 func initConfig(path *string) {
-	log.Printf("Init config from file: %s\n", *path)
+	log.Infof("Init config from file: %s", *path)
 	buf, err := ioutil.ReadFile(*path)
 	if err != nil {
-		log.Printf("Error reading config file: %s\n", *path)
+		log.Errorf("Unable to read config file: %s", *path)
 		return
 	}
 	c := Config{
@@ -85,11 +85,11 @@ func initConfig(path *string) {
 	}
 	err = yaml.Unmarshal(buf, &c)
 	if err != nil {
-		log.Printf("Error decoding .yaml file: %v\n", path)
+		log.Errorf("Unable to decode .yaml file: %v", path)
 		return
 	}
 	cJson, _ := json.Marshal(c)
-	log.Printf("Config: %s\n", string(cJson))
+	log.Debugf("Config: %s", string(cJson))
 
 	src.config = &c
 	src.isSource = true
@@ -127,9 +127,9 @@ func initClient(c *Redpanda, m *sync.Once) {
 		if c.isSource {
 			msg = "Source"
 		}
-		for _, b := range brokers {
-			bJson, _ := json.Marshal(b)
-			log.Printf("%s broker: %s\n", msg, string(bJson))
+		for _, broker := range brokers {
+			brokerJson, _ := json.Marshal(broker)
+			log.Infof("%s broker: %s\n", msg, string(brokerJson))
 		}
 	})
 }
@@ -164,9 +164,9 @@ func createTopic(adm *kadm.Client, partitions int32, replication int16, topic st
 	)
 	for _, ctr := range resp {
 		if ctr.Err != nil {
-			log.Printf("Unable to create topic '%s': %s", ctr.Topic, ctr.Err)
+			log.Warnf("Unable to create topic '%s': %s", ctr.Topic, ctr.Err)
 		} else {
-			log.Printf("Created topic '%s'", ctr.Topic)
+			log.Infof("Created topic '%s'", ctr.Topic)
 		}
 	}
 }
@@ -176,7 +176,7 @@ func backoff(exp int) {
 	if backoff >= float64(maxBackoffSec) {
 		backoff = float64(maxBackoffSec)
 	}
-	log.Printf("Backing off for %d seconds...", int(backoff))
+	log.Warnf("Backing off for %d seconds...", int(backoff))
 	time.Sleep(time.Duration(backoff) * time.Second)
 }
 
@@ -188,7 +188,7 @@ func forwardRecords() {
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
 				errCount += 1
-				log.Printf("Fetch error: %s", e.Err)
+				log.Errorf("Fetch error: %s", e.Err)
 			}
 			backoff(errCount)
 		}
@@ -202,14 +202,14 @@ func forwardRecords() {
 		err := dst.client.ProduceSync(ctx, fetches.Records()...).FirstErr()
 		if err != nil {
 			errCount += 1
-			log.Printf("Error forwarding %d records", len(fetches.Records()))
+			log.Errorf("Unable to forward %d records", len(fetches.Records()))
 			backoff(errCount)
 		} else {
 			err := src.client.CommitUncommittedOffsets(ctx)
 			if err != nil {
 				offsets := src.client.UncommittedOffsets()
 				offsetsJson, _ := json.Marshal(offsets)
-				log.Printf("Error comitting offsets: %v", string(offsetsJson))
+				log.Errorf("Unable to commit offsets: %v", string(offsetsJson))
 			}
 		}
 	}

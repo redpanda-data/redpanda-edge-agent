@@ -8,10 +8,13 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.0.0
 )
 
+require golang.org/x/sys v0.0.0-20210615035016-665e8c7367d1 // indirect
+
 require (
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/klauspost/compress v1.15.4 // indirect
 	github.com/pierrec/lz4/v4 v4.1.14 // indirect
+	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.1.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
