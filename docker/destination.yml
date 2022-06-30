@@ -6,19 +6,9 @@ services:
       - --node-id
       - '0'
       - --kafka-addr
-      - 'internal://0.0.0.0:9092,external://redpanda_destination:29092'
+      - 'default://0.0.0.0:29092'
       - --advertise-kafka-addr
-      - 'internal://redpanda_destination:9092,external://127.0.0.1:29092'
-      - --pandaproxy-addr
-      - 'internal://0.0.0.0:8082,external://redpanda_destination:28082'
-      - --advertise-pandaproxy-addr
-      - 'internal://redpanda_destination:8082,external://127.0.0.1:28082'
-      - --schema-registry-addr
-      - 'redpanda_destination:28081'
-      - --rpc-addr
-      - 'redpanda_destination:33145'
-      - --advertise-rpc-addr
-      - 'redpanda_destination:33145'
+      - 'default://127.0.0.1:29092'
       - --smp
       - '1'
       - --memory
@@ -28,10 +18,13 @@ services:
       - --overprovisioned
       - --check=false
       - --default-log-level=info
+      - --set redpanda.developer_mode=true
+      - '--set redpanda.kafka_api_tls={"name":"default","enabled":true,"require_client_auth":true,"cert_file":"/etc/redpanda/certs/dst.crt","key_file":"/etc/redpanda/certs/dst.key","truststore_file":"/etc/redpanda/certs/ca.crt"}'
+      - '--set redpanda.admin_api_tls={"enabled":true,"require_client_auth":true,"cert_file":"/etc/redpanda/certs/dst.crt","key_file":"/etc/redpanda/certs/dst.key","truststore_file":"/etc/redpanda/certs/ca.crt"}'
     image: 'docker.vectorized.io/vectorized/redpanda:v22.1.3'
-    container_name: 'redpanda_destination'    
+    container_name: 'redpanda_destination'
+    volumes:
+      - ./certs:/etc/redpanda/certs
     ports:
-      - 28081:28081 # Schema registry port
-      - 28082:28082 # Pandaproxy port
-      - 29092:29092 # Kafka API port
-      - 29644:9644  # Prometheus and HTTP admin port
+      - "29092:29092"
+      - "29644:9644"

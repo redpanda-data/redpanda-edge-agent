@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"math"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sasl/aws"
+	"github.com/twmb/franz-go/pkg/sasl/plain"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
+	"github.com/twmb/tlscfg"
 
 	"io/ioutil"
 
@@ -20,17 +25,34 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type SASLConfig struct {
+	SaslMethod   string `yaml:"sasl_method"`
+	SaslUsername string `yaml:"sasl_username"`
+	SaslPassword string `yaml:"sasl_password"`
+}
+
+type TLSConfig struct {
+	Enabled        bool
+	ClientKeyFile  string `yaml:"client_key"`
+	ClientCertFile string `yaml:"client_cert"`
+	CaFile         string `yaml:"ca_cert"`
+}
+
 type SourceCluster struct {
 	BootstrapServers   string `yaml:"bootstrap_servers"`
 	Topics             []string
-	DefaultPartitions  int32 `yaml:"default_partitions"`
-	DefaultReplication int16 `yaml:"default_replication"`
+	DefaultPartitions  int32      `yaml:"default_partitions"`
+	DefaultReplication int16      `yaml:"default_replication"`
+	SASL               SASLConfig `yaml:"sasl"`
+	TLS                TLSConfig  `yaml:"tls"`
 }
 
 type DestinationCluster struct {
-	BootstrapServers   string `yaml:"bootstrap_servers"`
-	DefaultPartitions  int32  `yaml:"default_partitions"`
-	DefaultReplication int16  `yaml:"default_replication"`
+	BootstrapServers   string     `yaml:"bootstrap_servers"`
+	DefaultPartitions  int32      `yaml:"default_partitions"`
+	DefaultReplication int16      `yaml:"default_replication"`
+	SASL               SASLConfig `yaml:"sasl"`
+	TLS                TLSConfig  `yaml:"tls"`
 }
 
 type Config struct {
@@ -73,6 +95,7 @@ func initClients(path *string) {
 	initTopics()
 }
 
+// Closes the source and destination client connections
 func shutdown() {
 	log.Infoln("Closing client connections")
 	src.adm.Close()
@@ -81,6 +104,7 @@ func shutdown() {
 	dst.client.Close()
 }
 
+// Initializes the agent configuration from the provided .yaml file
 func initConfig(path *string) {
 	log.Infof("Init config from file: %s", *path)
 	buf, err := ioutil.ReadFile(*path)
@@ -112,12 +136,13 @@ func initConfig(path *string) {
 	src.isSource = true
 }
 
+// Creates new Kafka and Admin clients to communicate with a cluster
 func initClient(c *Redpanda, m *sync.Once) {
 	m.Do(func() {
 		var err error
-		opt := []kgo.Opt{}
+		opts := []kgo.Opt{}
 		if c.isSource {
-			opt = append(opt,
+			opts = append(opts,
 				kgo.SeedBrokers(strings.Split(config.Source.BootstrapServers, ",")...),
 				kgo.ConsumeTopics(config.Source.Topics...),
 				kgo.ConsumerGroup(config.Id),
@@ -125,12 +150,16 @@ func initClient(c *Redpanda, m *sync.Once) {
 				kgo.DisableAutoCommit(),
 				kgo.SessionTimeout(60000*time.Millisecond),
 			)
+			opts = tlsOpt(&config.Source.TLS, opts)
+			opts = saslOpt(&config.Source.SASL, opts)
 		} else {
-			opt = append(opt,
+			opts = append(opts,
 				kgo.SeedBrokers(strings.Split(config.Destination.BootstrapServers, ",")...),
 			)
+			opts = tlsOpt(&config.Destination.TLS, opts)
+			opts = saslOpt(&config.Destination.SASL, opts)
 		}
-		c.client, err = kgo.NewClient(opt...)
+		c.client, err = kgo.NewClient(opts...)
 		if err != nil {
 			log.Fatalf("Unable to load client: %v", err)
 		}
@@ -143,11 +172,68 @@ func initClient(c *Redpanda, m *sync.Once) {
 		if c.isSource {
 			msg = "Source"
 		}
+		log.Infof("Created %s client", msg)
 		for _, broker := range brokers {
 			brokerJson, _ := json.Marshal(broker)
 			log.Infof("%s broker: %s\n", msg, string(brokerJson))
 		}
 	})
+}
+
+// Initializes the necessary TLS configuration options
+func tlsOpt(config *TLSConfig, opts []kgo.Opt) []kgo.Opt {
+	if config.Enabled {
+		if config.CaFile != "" || config.ClientCertFile != "" || config.ClientKeyFile != "" {
+			tc, err := tlscfg.New(
+				tlscfg.MaybeWithDiskCA(config.CaFile, tlscfg.ForClient),
+				tlscfg.MaybeWithDiskKeyPair(config.ClientCertFile, config.ClientKeyFile),
+			)
+			if err != nil {
+				log.Fatalf("Unable to create TLS config: %v", err)
+			}
+			opts = append(opts, kgo.DialTLSConfig(tc))
+		} else {
+			opts = append(opts, kgo.DialTLSConfig(new(tls.Config)))
+		}
+	}
+	return opts
+}
+
+// Initializes the necessary SASL configuration options
+func saslOpt(config *SASLConfig, opts []kgo.Opt) []kgo.Opt {
+	if config.SaslMethod != "" || config.SaslUsername != "" || config.SaslPassword != "" {
+		if config.SaslMethod == "" || config.SaslUsername == "" || config.SaslPassword == "" {
+			log.Fatalln("All of SaslMechanism, SaslUsername, SaslPassword must be specified if any are")
+		}
+		method := strings.ToLower(config.SaslMethod)
+		method = strings.ReplaceAll(method, "-", "")
+		method = strings.ReplaceAll(method, "_", "")
+		switch method {
+		case "plain":
+			opts = append(opts, kgo.SASL(plain.Auth{
+				User: config.SaslUsername,
+				Pass: config.SaslPassword,
+			}.AsMechanism()))
+		case "scramsha256":
+			opts = append(opts, kgo.SASL(scram.Auth{
+				User: config.SaslUsername,
+				Pass: config.SaslPassword,
+			}.AsSha256Mechanism()))
+		case "scramsha512":
+			opts = append(opts, kgo.SASL(scram.Auth{
+				User: config.SaslUsername,
+				Pass: config.SaslPassword,
+			}.AsSha512Mechanism()))
+		case "awsmskiam":
+			opts = append(opts, kgo.SASL(aws.Auth{
+				AccessKey: config.SaslUsername,
+				SecretKey: config.SaslPassword,
+			}.AsManagedStreamingIAMMechanism()))
+		default:
+			log.Fatalf("Unrecognized sasl method: %s", method)
+		}
+	}
+	return opts
 }
 
 func initTopics() {
@@ -194,6 +280,15 @@ func checkTopics(cluster *Redpanda, topics *[]string) {
 	}
 }
 
+// Pauses fetching new records when a fetch error is received.
+// The backoff period is determined by the number of sequential
+// fetch errors received, and it increases exponentially up to
+// a maximum number of seconds set by 'maxBackoffSec'.
+//
+// For example:
+//   - 2 fetch errors = 2 ^ 2 = 4 second backoff
+//   - 3 fetch errors = 3 ^ 2 = 9 second backoff
+//   - 4 fetch errors = 4 ^ 2 = 16 second backoff
 func backoff(exp int) {
 	backoff := math.Pow(float64(exp), 2)
 	if backoff >= float64(maxBackoffSec) {
@@ -203,6 +298,9 @@ func backoff(exp int) {
 	time.Sleep(time.Duration(backoff) * time.Second)
 }
 
+// Continuously fetches batches of records from the source cluster and
+// forwards them to the destination cluster. Consumer offsets are only
+// committed when the destination cluster acknowledges the records.
 func forwardRecords(ctx context.Context) {
 	errCount := 0
 	log.Infoln("Starting to forward records...")
@@ -222,10 +320,13 @@ func forwardRecords(ctx context.Context) {
 		iter := fetches.RecordIter()
 		log.Debugf("Consumed %d records", len(fetches.Records()))
 		for !iter.Done() {
-			// Set key to the agent id to route records
-			// to the same topic partition.
+			// If the record key is empty, then set it
+			// to the agent id to route the records to
+			// the same topic partition.
 			record := iter.Next()
-			record.Key = []byte(config.Id)
+			if record.Key == nil {
+				record.Key = []byte(config.Id)
+			}
 		}
 		err := dst.client.ProduceSync(ctx, fetches.Records()...).FirstErr()
 		if err != nil {
