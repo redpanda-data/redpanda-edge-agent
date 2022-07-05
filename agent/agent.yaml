@@ -8,15 +8,15 @@ source:
   default_replication: 1
   tls:
     enabled: true
-    client_key: "docker/certs/agent.key"
-    client_cert: "docker/certs/agent.crt"
-    ca_cert: "docker/certs/ca.crt"
+    client_key: "../docker/certs/agent.key"
+    client_cert: "../docker/certs/agent.crt"
+    ca_cert: "../docker/certs/ca.crt"
 destination:
   bootstrap_servers: 127.0.0.1:29092
   default_partitions: 1
   default_replication: 1
   tls:
     enabled: true
-    client_key: "docker/certs/agent.key"
-    client_cert: "docker/certs/agent.crt"
-    ca_cert: "docker/certs/ca.crt"
+    client_key: "../docker/certs/agent.key"
+    client_cert: "../docker/certs/agent.crt"
+    ca_cert: "../docker/certs/ca.crt"

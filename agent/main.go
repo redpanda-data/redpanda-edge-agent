@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,8 @@ type TLSConfig struct {
 type SourceCluster struct {
 	BootstrapServers   string `yaml:"bootstrap_servers"`
 	Topics             []string
+	ConsumerGroup      string     `yaml:"consumer_group_id"`
+	MaxPollRecords     int        `yaml:"max_poll_records"`
 	DefaultPartitions  int32      `yaml:"default_partitions"`
 	DefaultReplication int16      `yaml:"default_replication"`
 	SASL               SASLConfig `yaml:"sasl"`
@@ -79,14 +82,24 @@ var (
 
 // Returns the hostname reported by the kernel
 // to use as the default ID for the agent.
-func defaultID() string {
+var defaultID = func() string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		log.Fatalf("Unable to get hostname from kernel. Set Id in config")
 	}
 	log.Debugf("Hostname: %s", hostname)
 	return hostname
-}
+}()
+
+var defaultLogFile = func() string {
+	logName := "agent.log"
+	exPath, err := os.Executable()
+	if err != nil {
+		return filepath.Join("/var/log/redpanda", logName)
+	}
+	exDir := filepath.Dir(exPath)
+	return filepath.Join(exDir, logName)
+}()
 
 func initClients(path *string) {
 	initConfig(path)
@@ -113,10 +126,12 @@ func initConfig(path *string) {
 		return
 	}
 	config = Config{
-		Id:           defaultID(),
+		Id:           defaultID,
 		CreateTopics: false,
 		Source: SourceCluster{
 			BootstrapServers:   "127.0.0.1:9092",
+			ConsumerGroup:      defaultID,
+			MaxPollRecords:     1000,
 			DefaultPartitions:  1,
 			DefaultReplication: 1,
 		},
@@ -141,14 +156,17 @@ func initClient(c *Redpanda, m *sync.Once) {
 	m.Do(func() {
 		var err error
 		opts := []kgo.Opt{}
+		clusterStr := "Destination"
 		if c.isSource {
+			clusterStr = "Source"
 			opts = append(opts,
 				kgo.SeedBrokers(strings.Split(config.Source.BootstrapServers, ",")...),
 				kgo.ConsumeTopics(config.Source.Topics...),
-				kgo.ConsumerGroup(config.Id),
+				kgo.ConsumerGroup(config.Source.ConsumerGroup),
 				kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-				kgo.DisableAutoCommit(),
 				kgo.SessionTimeout(60000*time.Millisecond),
+				kgo.DisableAutoCommit(),
+				kgo.BlockRebalanceOnPoll(),
 			)
 			opts = tlsOpt(&config.Source.TLS, opts)
 			opts = saslOpt(&config.Source.SASL, opts)
@@ -159,23 +177,24 @@ func initClient(c *Redpanda, m *sync.Once) {
 			opts = tlsOpt(&config.Destination.TLS, opts)
 			opts = saslOpt(&config.Destination.SASL, opts)
 		}
+
 		c.client, err = kgo.NewClient(opts...)
 		if err != nil {
 			log.Fatalf("Unable to load client: %v", err)
 		}
+		if err = c.client.Ping(context.Background()); err != nil { // check connectivity to cluster
+			log.Fatalf("Unable to ping %s cluster: %s", clusterStr, err.Error())
+		}
+
 		c.adm = kadm.NewClient(c.client)
 		brokers, err := c.adm.ListBrokers(context.Background())
 		if err != nil {
 			log.Fatalf("Unable to list brokers: %v", err)
 		}
-		msg := "Destination"
-		if c.isSource {
-			msg = "Source"
-		}
-		log.Infof("Created %s client", msg)
+		log.Infof("Created %s client", clusterStr)
 		for _, broker := range brokers {
 			brokerJson, _ := json.Marshal(broker)
-			log.Infof("%s broker: %s\n", msg, string(brokerJson))
+			log.Infof("%s broker: %s", clusterStr, string(brokerJson))
 		}
 	})
 }
@@ -245,7 +264,6 @@ func initTopics() {
 // clusters. If the topics to not exist then this function will
 // attempt to create them if configured to do so.
 func checkTopics(cluster *Redpanda, topics *[]string) {
-	ctx := context.Background()
 	clusterStr := "source"
 	part := config.Source.DefaultPartitions
 	repl := config.Source.DefaultReplication
@@ -254,7 +272,7 @@ func checkTopics(cluster *Redpanda, topics *[]string) {
 		part = config.Destination.DefaultPartitions
 		repl = config.Destination.DefaultReplication
 	}
-	topicDetails, err := cluster.adm.ListTopics(ctx, *topics...)
+	topicDetails, err := cluster.adm.ListTopics(context.Background(), *topics...)
 	if err != nil {
 		log.Errorf("Unable to list %s topics: %s", clusterStr, err.Error())
 		return
@@ -263,7 +281,7 @@ func checkTopics(cluster *Redpanda, topics *[]string) {
 		exists := topicDetails.Has(topic)
 		if !exists {
 			if config.CreateTopics {
-				resp, _ := cluster.adm.CreateTopics(ctx, part, repl, nil, topic)
+				resp, _ := cluster.adm.CreateTopics(context.Background(), part, repl, nil, topic)
 				for _, ctr := range resp {
 					if ctr.Err != nil {
 						log.Warnf("Unable to create %s topic '%s': %s", clusterStr, ctr.Topic, ctr.Err)
@@ -305,7 +323,7 @@ func forwardRecords(ctx context.Context) {
 	errCount := 0
 	log.Infoln("Starting to forward records...")
 	for {
-		fetches := src.client.PollFetches(ctx)
+		fetches := src.client.PollRecords(ctx, config.Source.MaxPollRecords)
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
 				if e.Err == context.Canceled {
@@ -347,16 +365,27 @@ func forwardRecords(ctx context.Context) {
 				log.Debugf("Offsets committed")
 			}
 		}
+		src.client.AllowRebalance()
 	}
 }
 
 func main() {
-	configFile := flag.String("config", "configs/config.yaml", "path to config file")
+	configFile := flag.String("config", "agent.yaml", "path to agent config file")
 	logLevelStr := flag.String("loglevel", "info", "logging level")
+	enableLogFile := flag.Bool("enablelog", false, "log to a file instead of stderr")
+	logFile := flag.String("logfile", defaultLogFile, "if 'enablelog' is true, then log to this file")
 	flag.Parse()
 
 	logLevel, _ := log.ParseLevel(*logLevelStr)
 	log.SetLevel(logLevel)
+	if *enableLogFile {
+		logOutput, err := os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0666)
+		if err != nil {
+			log.Fatalf("Unable to open log file: %v", err)
+		}
+		defer logOutput.Close()
+		log.SetOutput(logOutput)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	initClients(configFile)
