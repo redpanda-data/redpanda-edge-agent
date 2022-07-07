@@ -183,13 +183,13 @@ func initClient(c *Redpanda, m *sync.Once) {
 			log.Fatalf("Unable to load client: %v", err)
 		}
 		if err = c.client.Ping(context.Background()); err != nil { // check connectivity to cluster
-			log.Fatalf("Unable to ping %s cluster: %s", clusterStr, err.Error())
+			log.Errorf("Unable to ping %s cluster: %s", clusterStr, err.Error())
 		}
 
 		c.adm = kadm.NewClient(c.client)
 		brokers, err := c.adm.ListBrokers(context.Background())
 		if err != nil {
-			log.Fatalf("Unable to list brokers: %v", err)
+			log.Errorf("Unable to list brokers: %v", err)
 		}
 		log.Infof("Created %s client", clusterStr)
 		for _, broker := range brokers {
@@ -312,8 +312,9 @@ func backoff(exp int) {
 	if backoff >= float64(maxBackoffSec) {
 		backoff = float64(maxBackoffSec)
 	}
-	log.Warnf("Backing off for %d seconds...", int(backoff))
+	log.Warnf("Backing off for %d seconds", int(backoff))
 	time.Sleep(time.Duration(backoff) * time.Second)
+	log.Debug("Resuming")
 }
 
 // Continuously fetches batches of records from the source cluster and
@@ -349,7 +350,7 @@ func forwardRecords(ctx context.Context) {
 		err := dst.client.ProduceSync(ctx, fetches.Records()...).FirstErr()
 		if err != nil {
 			errCount += 1
-			log.Errorf("Unable to forward %d record(s)", len(fetches.Records()))
+			log.Errorf("Unable to forward %d record(s): %s", len(fetches.Records()), err.Error())
 			backoff(errCount)
 		} else {
 			log.Debugf("Forwarded %d records", len(fetches.Records()))
@@ -362,6 +363,7 @@ func forwardRecords(ctx context.Context) {
 			if err != nil {
 				log.Errorf("Unable to commit offsets: %s", err.Error())
 			} else {
+				errCount = 0
 				log.Debugf("Offsets committed")
 			}
 		}

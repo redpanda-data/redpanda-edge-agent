@@ -65,13 +65,18 @@ echo '01' > serial.txt
 cat > node.cnf <<EOF
 # OpenSSL node configuration file
 [ req ]
-prompt             =no
+prompt             = no
 distinguished_name = distinguished_name
 req_extensions     = extensions
 [ distinguished_name ]
 organizationName   = Redpanda
 [ extensions ]
-subjectAltName     = critical,DNS:localhost,IP:127.0.0.1
+subjectAltName     = critical,@alt_names
+[ alt_names ]
+DNS  = 127.0.0.1
+IP.1 = 127.0.0.1
+IP.2 = 172.24.1.10
+IP.3 = 172.24.1.20
 EOF
 
 # Generate RSA private key for the nodes

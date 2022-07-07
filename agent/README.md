@@ -4,11 +4,11 @@ A lightweight internet of things (IoT) agent that runs alongside Redpanda at the
 
 # Install
 
-```
+```shell
 go clean
 go build -o redpanda-edge-agent
-sudo mkdir -p ${HOME}/rpk-plugin/bin
-sudo cp redpanda-edge-agent ${HOME}/rpk-plugin/bin
+mkdir -p ${HOME}/rpk-plugin/bin
+cp redpanda-edge-agent ${HOME}/rpk-plugin/bin
 export PATH=${HOME}/rpk-plugin/bin:${PATH}
 ```
 
@@ -21,7 +21,7 @@ go run main.go -loglevel=DEBUG
 ```
 
 Or by running the binary:
-```
+```shell
 Usage of redpanda-edge-agent:
   -config string
     	path to agent config file (default "agent.yaml")

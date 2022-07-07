@@ -106,7 +106,6 @@ func startCommand(params *Params) *cobra.Command {
 			p := exec.Command(binaryName,
 				"-config", params.ConfigPath,
 				"-loglevel", params.LogLevel,
-				"-enablelog", "true",
 			)
 			fmt.Fprintf(os.Stderr, "Running command: %s \n", p.String())
 
