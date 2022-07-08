@@ -307,53 +307,71 @@ func checkTopics(cluster *Redpanda, topics *[]string) {
 //   - 2 fetch errors = 2 ^ 2 = 4 second backoff
 //   - 3 fetch errors = 3 ^ 2 = 9 second backoff
 //   - 4 fetch errors = 4 ^ 2 = 16 second backoff
-func backoff(exp int) {
-	backoff := math.Pow(float64(exp), 2)
+func backoff(exp *int) {
+	*exp += 1
+	backoff := math.Pow(float64(*exp), 2)
 	if backoff >= float64(maxBackoffSec) {
 		backoff = float64(maxBackoffSec)
 	}
 	log.Warnf("Backing off for %d seconds", int(backoff))
 	time.Sleep(time.Duration(backoff) * time.Second)
-	log.Debug("Resuming")
 }
 
 // Continuously fetches batches of records from the source cluster and
 // forwards them to the destination cluster. Consumer offsets are only
 // committed when the destination cluster acknowledges the records.
 func forwardRecords(ctx context.Context) {
-	errCount := 0
+	var errCount int = 0
+	var fetches kgo.Fetches
+	var sent bool
+	var committed bool
 	log.Infoln("Starting to forward records...")
 	for {
-		fetches := src.client.PollRecords(ctx, config.Source.MaxPollRecords)
-		if errs := fetches.Errors(); len(errs) > 0 {
-			for _, e := range errs {
-				if e.Err == context.Canceled {
-					log.Infof("Received interrupt: %s", e.Err)
+		if (sent && committed) || len(fetches.Records()) == 0 {
+			// Only poll when the previous fetches were successfully forwarded and committed
+			log.Debug("Polling for records...")
+			fetches = src.client.PollRecords(ctx, config.Source.MaxPollRecords)
+			if errs := fetches.Errors(); len(errs) > 0 {
+				for _, e := range errs {
+					if e.Err == context.Canceled {
+						log.Infof("Received interrupt: %s", e.Err)
+						return
+					}
+					log.Errorf("Fetch error: %s", e.Err)
+				}
+				backoff(&errCount)
+			}
+			log.Debugf("Consumed %d records", len(fetches.Records()))
+			iter := fetches.RecordIter()
+			for !iter.Done() {
+				// If the record key is empty, then set it
+				// to the agent id to route the records to
+				// the same topic partition.
+				record := iter.Next()
+				if record.Key == nil {
+					record.Key = []byte(config.Id)
+				}
+			}
+			sent = false
+			committed = false
+		}
+
+		if !sent {
+			err := dst.client.ProduceSync(ctx, fetches.Records()...).FirstErr()
+			if err != nil {
+				if err == context.Canceled {
+					log.Infof("Received interrupt: %s", err.Error())
 					return
 				}
-				errCount += 1
-				log.Errorf("Fetch error: %s", e.Err)
-			}
-			backoff(errCount)
-		}
-		iter := fetches.RecordIter()
-		log.Debugf("Consumed %d records", len(fetches.Records()))
-		for !iter.Done() {
-			// If the record key is empty, then set it
-			// to the agent id to route the records to
-			// the same topic partition.
-			record := iter.Next()
-			if record.Key == nil {
-				record.Key = []byte(config.Id)
+				log.Errorf("Unable to forward %d record(s): %s", len(fetches.Records()), err.Error())
+				backoff(&errCount)
+			} else {
+				sent = true
+				log.Debugf("Forwarded %d records", len(fetches.Records()))
 			}
 		}
-		err := dst.client.ProduceSync(ctx, fetches.Records()...).FirstErr()
-		if err != nil {
-			errCount += 1
-			log.Errorf("Unable to forward %d record(s): %s", len(fetches.Records()), err.Error())
-			backoff(errCount)
-		} else {
-			log.Debugf("Forwarded %d records", len(fetches.Records()))
+
+		if sent && !committed {
 			if log.GetLevel() == log.DebugLevel {
 				offsets := src.client.UncommittedOffsets()
 				offsetsJson, _ := json.Marshal(offsets)
@@ -361,12 +379,19 @@ func forwardRecords(ctx context.Context) {
 			}
 			err := src.client.CommitUncommittedOffsets(ctx)
 			if err != nil {
+				if err == context.Canceled {
+					log.Infof("Received interrupt: %s", err.Error())
+					return
+				}
 				log.Errorf("Unable to commit offsets: %s", err.Error())
+				backoff(&errCount)
 			} else {
-				errCount = 0
+				errCount = 0 // reset error counter
+				committed = true
 				log.Debugf("Offsets committed")
 			}
 		}
+
 		src.client.AllowRebalance()
 	}
 }
