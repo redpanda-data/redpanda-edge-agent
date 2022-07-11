@@ -2,6 +2,10 @@
 
 A lightweight internet of things (IoT) agent that runs alongside Redpanda at the edge to forward events to a central Kafka API compatible cluster. The agent is written in Go and uses the [franz-go](https://github.com/twmb/franz-go) Kafka client library.
 
+<p align="center">
+<img src="./redpanda_iot.png" />
+</p>
+
 ## Modules
 
 This project is split into two modules. The [agent](./agent/) module contains the code for the event forwarding application, and the [plugin](./plugin/) module contains the code for extending `rpk` to add the ability to start and stop the agent using the `rpk` command line ultility. See the module README files for more details and instructions for building and installing the applications at the edge.
