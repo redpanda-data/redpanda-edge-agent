@@ -2,11 +2,25 @@
 
 A lightweight internet of things (IoT) agent that runs alongside Redpanda at the edge to forward events to a central Kafka API compatible cluster. The agent is written in Go and uses the [franz-go](https://github.com/twmb/franz-go) Kafka client library.
 
-# Install
+# Build & Install
+
+Build the agent for any Go-supported target platform by setting the `GOOS` and `GOARCH` variables. For a full list of supported architectures, run `go tool dist list`.
 
 ```shell
 go clean
-go build -o redpanda-edge-agent
+
+# MacOS (Intel)
+env GOOS=darwin GOARCH=amd64 go build -o redpanda-edge-agent
+
+# MacOS (M1)
+env GOOS=darwin GOARCH=arm64 go build -o redpanda-edge-agent
+
+# Linux (x86_64)
+env GOOS=linux GOARCH=amd64 go build -o redpanda-edge-agent
+
+# Linux (Arm)
+env GOOS=linux GOARCH=arm64 go build -o redpanda-edge-agent
+
 mkdir -p ${HOME}/rpk-plugin/bin
 cp redpanda-edge-agent ${HOME}/rpk-plugin/bin
 export PATH=${HOME}/rpk-plugin/bin:${PATH}
