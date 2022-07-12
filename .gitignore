@@ -5,7 +5,7 @@
 *.so
 *.dylib
 *rpk.*
-redpanda-edge-agent
+redpanda-edge-agent*
 
 # Test binary, built with `go test -c`
 *.test
