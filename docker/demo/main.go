@@ -52,7 +52,7 @@ type TrackPoint struct {
 	Elevation string
 }
 
-func send(client *kgo.Client, topic *string, gpx *XmlGpx, wg *sync.WaitGroup) {
+func send(client *kgo.Client, topic *string, delay *int, gpx *XmlGpx, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for i, trkpt := range gpx.Track.TrackSegment {
@@ -76,7 +76,7 @@ func send(client *kgo.Client, topic *string, gpx *XmlGpx, wg *sync.WaitGroup) {
 		if err := client.ProduceSync(context.Background(), r).FirstErr(); err != nil {
 			log.Printf("Synchronous produce error: %s", err.Error())
 		}
-		time.Sleep(time.Duration(defaultDelayMs) * time.Millisecond)
+		time.Sleep(time.Duration(*delay) * time.Millisecond)
 	}
 }
 
@@ -84,6 +84,7 @@ func main() {
 	dir := flag.String("dir", defaultInputDir, "directory containing .gpx files")
 	brokers := flag.String("brokers", defaultBrokers, "Kafka API bootstrap servers")
 	topic := flag.String("topic", defaultTopic, "Produce events to this topic")
+	delay := flag.Int("delay", defaultDelayMs, "Milliseconds delay in between producing events")
 	flag.Parse()
 
 	opts := []kgo.Opt{}
@@ -124,7 +125,7 @@ func main() {
 			log.Fatal(err.Error())
 		}
 		wg.Add(1)
-		go send(client, topic, gpx, &wg)
+		go send(client, topic, delay, gpx, &wg)
 	}
 	wg.Wait()
 	log.Printf("Done!")
