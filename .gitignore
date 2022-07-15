@@ -6,6 +6,10 @@
 *.dylib
 *rpk.*
 redpanda-edge-agent*
+telemetry-demo*
+
+# Release assets
+*.zip
 
 # Test binary, built with `go test -c`
 *.test
