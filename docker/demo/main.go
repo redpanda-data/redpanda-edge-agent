@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"path/filepath"
@@ -85,6 +86,7 @@ func main() {
 	brokers := flag.String("brokers", defaultBrokers, "Kafka API bootstrap servers")
 	topic := flag.String("topic", defaultTopic, "Produce events to this topic")
 	delay := flag.Int("delay", defaultDelayMs, "Milliseconds delay in between producing events")
+	stage := flag.Int("stage", 0, "Only read the .gpx file for this stage")
 	flag.Parse()
 
 	opts := []kgo.Opt{}
@@ -112,6 +114,11 @@ func main() {
 	gpxFiles := []string{}
 	for _, f := range files {
 		if !f.IsDir() && strings.HasSuffix(f.Name(), ".gpx") {
+			if *stage > 0 {
+				if !strings.Contains(f.Name(), fmt.Sprintf("tdf22_%d", *stage)) {
+					continue
+				}
+			}
 			gpxFiles = append(gpxFiles, filepath.Join(*dir, f.Name()))
 		}
 	}
