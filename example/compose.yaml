@@ -1,0 +1,71 @@
+networks:
+  redpanda_network:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: "172.24.1.0/24"
+        gateway: "172.24.1.1"
+services:
+  redpanda_source:
+    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    container_name: redpanda_source
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://172.24.1.10:19092
+      - --advertise-kafka-addr
+      - internal://172.24.1.10:9092,external://127.0.0.1:19092
+      - --overprovisioned
+      - --check=false
+      - "--set redpanda.kafka_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/src.crt',\
+          'key_file':'/etc/redpanda/certs/src.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
+      - "--set redpanda.admin_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/src.crt',\
+          'key_file':'/etc/redpanda/certs/src.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
+    networks:
+      redpanda_network:
+        ipv4_address: "172.24.1.10"
+    volumes:
+      - ./certs:/etc/redpanda/certs
+      - ./redpanda-edge-agent:/usr/local/bin/redpanda-edge-agent
+      - ./agent.yaml:/etc/redpanda/agent.yaml
+      - ./supervisor.conf:/etc/supervisord.conf
+    ports:
+      - "19092:19092"
+      - "19644:9644"
+  redpanda_destination:
+    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    container_name: redpanda_destination
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://172.24.1.20:29092
+      - --advertise-kafka-addr
+      - internal://172.24.1.20:9092,external://127.0.0.1:29092
+      - --overprovisioned
+      - --check=false
+      - "--set redpanda.kafka_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/dst.crt',\
+          'key_file':'/etc/redpanda/certs/dst.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
+      - "--set redpanda.admin_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/dst.crt',\
+          'key_file':'/etc/redpanda/certs/dst.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
+    networks:
+      redpanda_network:
+        ipv4_address: "172.24.1.20"
+    volumes:
+      - ./certs:/etc/redpanda/certs
+    ports:
+      - "29092:29092"
+      - "29644:9644"
