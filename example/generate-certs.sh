@@ -135,5 +135,8 @@ openssl ca \
 -subj "/O=redpanda/CN=redpanda_agent" \
 -batch
 
+# Set permissions required for Docker on Linux
+chmod -R 755 certs
+
 # Cleanup
 rm -f *.cnf index.txt* serial.txt* $CERTS_DIR/*.pem $CERTS_DIR/*.csr
