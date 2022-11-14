@@ -20,29 +20,20 @@ env GOOS=linux GOARCH=amd64 go build -o redpanda-edge-agent
 
 # Linux (Arm)
 env GOOS=linux GOARCH=arm64 go build -o redpanda-edge-agent
-
-mkdir -p ${HOME}/rpk-plugin/bin
-cp redpanda-edge-agent ${HOME}/rpk-plugin/bin
-export PATH=${HOME}/rpk-plugin/bin:${PATH}
 ```
 
 # Running the agent
 
-The recommended way to run the agent is via Redpanda's command line utility `rpk`, but you can run it independently using Go:
-
+Compile and run the main Go package:
 ```
-go run main.go -loglevel=DEBUG
+go run *.go -loglevel=DEBUG
 ```
 
-Or by running the binary:
+Or run the compiled binary:
 ```shell
-Usage of redpanda-edge-agent:
+Usage of ./redpanda-edge-agent:
   -config string
     	path to agent config file (default "agent.yaml")
-  -enablelog
-    	log to a file instead of stderr
-  -logfile string
-    	if 'enablelog' is true, then log to this file (default "${HOME}/rpk-plugin/bin/agent.log")
   -loglevel string
     	logging level (default "info")
 
@@ -71,10 +62,6 @@ source:
     # Set the consumer group for the agent to join and consume in.
     # Defaults to the agent id if not set.
     consumer_group_id: ""
-    # If "create_topics" is true, then attempt to create the topics on the source cluster
-    # with this number of partitions and replication factor.
-    default_partitions: 1
-    default_replication: 1
     # The source cluster TLS configuration.
     tls:
         enabled: true
@@ -90,10 +77,6 @@ source:
 # Destination cluster configuration.
 destination:
     bootstrap_servers: 127.0.0.1:29092
-    # If "create_topics" is true, then attempt to create the topics on the destination
-    # cluster with this number of partitions and replication factor.
-    default_partitions: 1
-    default_replication: 1
     # The destination cluster TLS configuration.
     tls:
         enabled: true
