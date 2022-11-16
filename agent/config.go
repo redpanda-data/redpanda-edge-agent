@@ -36,8 +36,10 @@ var defaultConfig = confmap.Provider(map[string]interface{}{
 	"create_topics":                 false,
 	"max_poll_records":              1000,
 	"max_backoff_secs":              600, // ten minutes
+	"source.name":                   "source",
 	"source.bootstrap_servers":      "127.0.0.1:19092",
 	"source.consumer_group_id":      defaultID,
+	"destination.name":              "destination",
 	"destination.bootstrap_servers": "127.0.0.1:29092",
 	"destination.consumer_group_id": defaultID,
 }, ".")
@@ -60,7 +62,28 @@ func InitConfig(path *string, config *koanf.Koanf) {
 	if err := config.Load(file.Provider(*path), yaml.Parser()); err != nil {
 		log.Errorf("Error loading config: %v", err)
 	}
+	validate(config)
 	log.Debugf(config.Sprint())
+}
+
+// Validate the config
+func validate(config *koanf.Koanf) {
+	config.MustString("id")
+	config.MustString("source.bootstrap_servers")
+	config.MustString("destination.bootstrap_servers")
+
+	sourceTopics := config.Strings("source.topics")
+	destinationTopics := config.Strings("destination.topics")
+	if len(sourceTopics) == 0 && len(destinationTopics) == 0 {
+		log.Fatal("No outbound or inbound topics configured")
+	}
+	for _, s := range sourceTopics {
+		for _, d := range destinationTopics {
+			if s == d {
+				log.Fatal("Topic circular dependency configured")
+			}
+		}
+	}
 }
 
 // Initializes the necessary TLS configuration options
