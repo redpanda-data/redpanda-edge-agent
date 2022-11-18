@@ -20,10 +20,10 @@ do
         exit 1
     fi
 
-    archive="redpanda-edge-agent-${platform[0]}-${platform[1]}-${version}.zip"
+    archive="redpanda-edge-agent-${platform[0]}-${platform[1]}-${version}.tar.gz"
     echo "Saving to: ${archive}"
     rm -f ${archive}
-    zip ${archive} ${agent_file}
+    tar -czvf ${archive} ${agent_file}
 done
 
 rm -f ${agent_file}
