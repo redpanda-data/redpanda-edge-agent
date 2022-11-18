@@ -21,6 +21,7 @@ import (
 
 type Redpanda struct {
 	name   string
+	topics []string
 	client *kgo.Client
 	adm    *kadm.Client
 }
@@ -90,6 +91,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 		}
 
 		rp.name = name
+		rp.topics = topics
 		rp.client, err = kgo.NewClient(opts...)
 		if err != nil {
 			log.Fatalf("Unable to load client: %v", err)
@@ -113,7 +115,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 	})
 }
 
-// Check the topics exist in both clusters. If the topics to not exist then
+// Check the topics exist on the given cluster. If the topics to not exist then
 // this function will attempt to create them if configured to do so.
 func checkTopics(cluster *Redpanda, topics []string) {
 	ctx := context.Background()
@@ -253,8 +255,10 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 }
 
 func main() {
-	configFile := flag.String("config", "agent.yaml", "path to agent config file")
-	logLevelStr := flag.String("loglevel", "info", "logging level")
+	configFile := flag.String(
+		"config", "agent.yaml", "path to agent config file")
+	logLevelStr := flag.String(
+		"loglevel", "info", "logging level")
 	flag.Parse()
 
 	logLevel, _ := log.ParseLevel(*logLevelStr)
@@ -264,16 +268,21 @@ func main() {
 	initClient(&source, &sourceOnce, "source")
 	initClient(&destination, &destinationOnce, "destination")
 
-	topics := config.Strings("source.topics")
-	topics = append(topics, config.Strings("destination.topics")...)
-	checkTopics(&source, topics)
-	checkTopics(&destination, topics)
+	allTopics := append([]string(nil), source.topics...)
+	allTopics = append(allTopics, destination.topics...)
+	checkTopics(&source, allTopics)
+	checkTopics(&destination, allTopics)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-
-	wg.Add(2)
-	go forwardRecords(&source, &destination, ctx) // Push
-	go forwardRecords(&destination, &source, ctx) // Pull
+	ctx, stop := signal.NotifyContext(
+		context.Background(), os.Interrupt, os.Kill)
+	if len(source.topics) > 0 {
+		wg.Add(1)
+		go forwardRecords(&source, &destination, ctx) // Push to destination
+	}
+	if len(destination.topics) > 0 {
+		wg.Add(1)
+		go forwardRecords(&destination, &source, ctx) // Pull from destination
+	}
 	wg.Wait()
 
 	ctx.Done()
