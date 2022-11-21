@@ -104,4 +104,13 @@ destination:
         sasl_method: ""
         sasl_username: ""
         sasl_password: ""
+# Send agent heartbeat / metrics messages to the destination cluster for
+# monitoring and alerting.
+metrics:
+    # Enable or disable the metrics
+    enabled: true
+    # The name of the topic to send heartbeat messages to
+    topic: metrics
+    # The number of seconds in between sending heartbeat messages
+    interval_sec: 10
 ```

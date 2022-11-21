@@ -117,7 +117,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 
 // Check the topics exist on the given cluster. If the topics to not exist then
 // this function will attempt to create them if configured to do so.
-func checkTopics(cluster *Redpanda, topics []string) {
+func CheckTopics(cluster *Redpanda, topics []string) {
 	ctx := context.Background()
 	topicDetails, err := cluster.adm.ListTopics(ctx, topics...)
 	if err != nil {
@@ -270,8 +270,8 @@ func main() {
 
 	allTopics := append([]string(nil), source.topics...)
 	allTopics = append(allTopics, destination.topics...)
-	checkTopics(&source, allTopics)
-	checkTopics(&destination, allTopics)
+	CheckTopics(&source, allTopics)
+	CheckTopics(&destination, allTopics)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(), os.Interrupt, os.Kill)
@@ -282,6 +282,10 @@ func main() {
 	if len(destination.topics) > 0 {
 		wg.Add(1)
 		go forwardRecords(&destination, &source, ctx) // Pull from destination
+	}
+	if config.Bool("metrics.enabled") {
+		wg.Add(1)
+		go SendMetrics(config, &destination)
 	}
 	wg.Wait()
 

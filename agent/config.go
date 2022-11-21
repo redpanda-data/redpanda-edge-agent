@@ -42,6 +42,9 @@ var defaultConfig = confmap.Provider(map[string]interface{}{
 	"destination.name":              "destination",
 	"destination.bootstrap_servers": "127.0.0.1:29092",
 	"destination.consumer_group_id": defaultID,
+	"metrics.enabled":               true,
+	"metrics.topic":                 "metrics",
+	"metrics.interval_sec":          10,
 }, ".")
 
 // Returns the hostname reported by the kernel to use as the default ID for the
