@@ -1,19 +1,23 @@
 create_topics: true
 source:
-  bootstrap_servers: 172.24.1.10:9092 # use secured internal interface
+  name: "source"
+  bootstrap_servers: 172.24.1.10:9092 # use secured internal interface  
+  # List of outbound topics to push from source to destination
   topics:
-    - telemetry
-  default_partitions: 1
-  default_replication: 1
+    - telemetry1
+    - telemetry2
   tls:
     enabled: true
     client_key: "/etc/redpanda/certs/agent.key"
     client_cert: "/etc/redpanda/certs/agent.crt"
     ca_cert: "/etc/redpanda/certs/ca.crt"
 destination:
-  bootstrap_servers: 172.24.1.20:9092 # use secured internal interface
-  default_partitions: 1
-  default_replication: 1
+  name: "destination"
+  bootstrap_servers: 172.24.1.20:9092 # use secured internal interface  
+  # List of inbound topics to pull from destination to source
+  topics:
+    - config1
+    - config2
   tls:
     enabled: true
     client_key: "/etc/redpanda/certs/agent.key"

@@ -20,9 +20,10 @@ import (
 )
 
 type Redpanda struct {
-	client   *kgo.Client
-	adm      *kadm.Client
-	isSource bool
+	name   string
+	topics []string
+	client *kgo.Client
+	adm    *kadm.Client
 }
 
 var (
@@ -31,6 +32,7 @@ var (
 	sourceOnce      sync.Once
 	destination     Redpanda
 	destinationOnce sync.Once
+	wg              sync.WaitGroup
 )
 
 // Closes the source and destination client connections
@@ -42,10 +44,21 @@ func shutdown() {
 	destination.client.Close()
 }
 
-// Creates new Kafka and Admin clients to communicate with a cluster
+// Creates new Kafka and Admin clients to communicate with a cluster.
+//
+// The `pathPrefix` must be set to either `source` or `destination` as it
+// determines what settings are read from the configuration.
+//
+// The topics listed in `source.topics` are the topics that will be pushed by
+// the agent from the source cluster to the destination cluster.
+//
+// The topics listed in `destination.topics` are the topics that will be pulled
+// by the agent from the destination cluster to the source cluster.
 func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 	mutex.Do(func() {
 		var err error
+		name := config.String(
+			fmt.Sprintf("%s.name", pathPrefix))
 		servers := config.String(
 			fmt.Sprintf("%s.bootstrap_servers", pathPrefix))
 		topics := config.Strings(
@@ -77,6 +90,8 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 			opts = SASLOpt(&saslConfig, opts)
 		}
 
+		rp.name = name
+		rp.topics = topics
 		rp.client, err = kgo.NewClient(opts...)
 		if err != nil {
 			log.Fatalf("Unable to load client: %v", err)
@@ -92,53 +107,45 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 		if err != nil {
 			log.Errorf("Unable to list brokers: %v", err)
 		}
-		log.Infof("Created %s client", pathPrefix)
+		log.Infof("Created %s client", name)
 		for _, broker := range brokers {
 			brokerJson, _ := json.Marshal(broker)
 			log.Infof("\t %s broker: %s", pathPrefix, string(brokerJson))
 		}
-
-		if pathPrefix == "source" {
-			rp.isSource = true
-		}
 	})
 }
 
-// Check the topics exist in both clusters. If the topics to not exist then
+// Check the topics exist on the given cluster. If the topics to not exist then
 // this function will attempt to create them if configured to do so.
 func checkTopics(cluster *Redpanda, topics []string) {
 	ctx := context.Background()
-	clusterName := "source"
-	if !cluster.isSource {
-		clusterName = "destination"
-	}
 	topicDetails, err := cluster.adm.ListTopics(ctx, topics...)
 	if err != nil {
-		log.Errorf("Unable to list topics on %v: %v", clusterName, err)
+		log.Errorf("Unable to list topics on %s: %v", cluster.name, err)
 		return
 	}
 	for _, topic := range topics {
 		if !topicDetails.Has(topic) {
-			log.Debugf("Topic '%s' does not exist on %s", topic, clusterName)
 			if config.Exists("create_topics") {
+				// Use the clusters default partition and replication settings
 				resp, _ := cluster.adm.CreateTopics(
 					ctx, -1, -1, nil, topic)
 				for _, ctr := range resp {
 					if ctr.Err != nil {
 						log.Warnf("Unable to create topic '%s' on %s: %s",
-							ctr.Topic, clusterName, ctr.Err)
+							ctr.Topic, cluster.name, ctr.Err)
 					} else {
 						log.Infof("Created topic '%s' on %s",
-							ctr.Topic, clusterName)
+							ctr.Topic, cluster.name)
 					}
 				}
 			} else {
 				log.Fatalf("Topic '%s' does not exist on %s",
-					topic, clusterName)
+					topic, cluster.name)
 			}
 		} else {
 			log.Infof("Topic '%s' already exists on %s",
-				topic, clusterName)
+				topic, cluster.name)
 		}
 	}
 }
@@ -162,21 +169,22 @@ func backoff(exp *int) {
 	time.Sleep(time.Duration(backoff) * time.Second)
 }
 
-// Continuously fetches batches of records from the source cluster and
-// forwards them to the destination cluster. Consumer offsets are only
-// committed when the destination cluster acknowledges the records.
-func forwardRecords(ctx context.Context) {
+// Continuously fetch batches of records from the `src` cluster and forward
+// them to the `dst` cluster. Consumer offsets are only committed when the
+// `dst` cluster acknowledges the records.
+func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
+	defer wg.Done()
 	var errCount int = 0
 	var fetches kgo.Fetches
 	var sent bool
 	var committed bool
-	log.Infoln("Starting to forward records...")
+	log.Infof("Forwarding records from '%s' to '%s'", src.name, dst.name)
 	for {
 		if (sent && committed) || len(fetches.Records()) == 0 {
 			// Only poll when the previous fetches were successfully
 			// forwarded and committed
 			log.Debug("Polling for records...")
-			fetches = source.client.PollRecords(
+			fetches = src.client.PollRecords(
 				ctx, config.Int("max_poll_records"))
 			if errs := fetches.Errors(); len(errs) > 0 {
 				for _, e := range errs {
@@ -203,7 +211,8 @@ func forwardRecords(ctx context.Context) {
 		}
 
 		if !sent {
-			err := destination.client.ProduceSync(
+			// Forward records
+			err := dst.client.ProduceSync(
 				ctx, fetches.Records()...).FirstErr()
 			if err != nil {
 				if err == context.Canceled {
@@ -220,12 +229,13 @@ func forwardRecords(ctx context.Context) {
 		}
 
 		if sent && !committed {
+			// Records have been forwarded successfully, so commit offsets
 			if log.GetLevel() == log.DebugLevel {
-				offsets := source.client.UncommittedOffsets()
+				offsets := src.client.UncommittedOffsets()
 				offsetsJson, _ := json.Marshal(offsets)
 				log.Debugf("Committing offsets: %s", string(offsetsJson))
 			}
-			err := source.client.CommitUncommittedOffsets(ctx)
+			err := src.client.CommitUncommittedOffsets(ctx)
 			if err != nil {
 				if err == context.Canceled {
 					log.Infof("Received interrupt: %s", err.Error())
@@ -240,13 +250,15 @@ func forwardRecords(ctx context.Context) {
 			}
 		}
 
-		source.client.AllowRebalance()
+		src.client.AllowRebalance()
 	}
 }
 
 func main() {
-	configFile := flag.String("config", "agent.yaml", "path to agent config file")
-	logLevelStr := flag.String("loglevel", "info", "logging level")
+	configFile := flag.String(
+		"config", "agent.yaml", "path to agent config file")
+	logLevelStr := flag.String(
+		"loglevel", "info", "logging level")
 	flag.Parse()
 
 	logLevel, _ := log.ParseLevel(*logLevelStr)
@@ -256,12 +268,23 @@ func main() {
 	initClient(&source, &sourceOnce, "source")
 	initClient(&destination, &destinationOnce, "destination")
 
-	topics := config.Strings("source.topics")
-	checkTopics(&source, topics)
-	checkTopics(&destination, topics)
+	allTopics := append([]string(nil), source.topics...)
+	allTopics = append(allTopics, destination.topics...)
+	checkTopics(&source, allTopics)
+	checkTopics(&destination, allTopics)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	forwardRecords(ctx)
+	ctx, stop := signal.NotifyContext(
+		context.Background(), os.Interrupt, os.Kill)
+	if len(source.topics) > 0 {
+		wg.Add(1)
+		go forwardRecords(&source, &destination, ctx) // Push to destination
+	}
+	if len(destination.topics) > 0 {
+		wg.Add(1)
+		go forwardRecords(&destination, &source, ctx) // Pull from destination
+	}
+	wg.Wait()
+
 	ctx.Done()
 	stop()
 	shutdown()
