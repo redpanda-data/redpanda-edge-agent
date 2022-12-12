@@ -23,20 +23,20 @@ docker-compose up -d
 
 ## Test the agent
 
-Open a new terminal and produce some messages to the source's `telemetry` topic (note that the example [agent](./agent.yaml) is configured to create the topics on startup):
+Open a new terminal and produce some messages to the source's `telemetry1` topic (note that the example [agent](./agent.yaml) is configured to create the topics on startup):
 
 ```bash
 export REDPANDA_BROKERS=localhost:19092
-for i in {1..60}; do echo $(cat /dev/urandom | head -c10 | base64) | rpk topic produce telemetry; sleep 1; done
+for i in {1..60}; do echo $(cat /dev/urandom | head -c10 | base64) | rpk topic produce telemetry1; sleep 1; done
 ```
 
 The agent will forward the messages to a topic with the same name on the destination. Open a second terminal and consume the messages:
 
 ```bash
 export REDPANDA_BROKERS=localhost:29092
-rpk topic consume telemetry
+rpk topic consume telemetry1
 {
-  "topic": "telemetry",
+  "topic": "telemetry1",
   "key": "51940184cb08",
   "value": "q/F5LP5DmnIPog==",
   "timestamp": 1667984441252,
@@ -44,7 +44,7 @@ rpk topic consume telemetry
   "offset": 0
 }
 {
-  "topic": "telemetry",
+  "topic": "telemetry1",
   "key": "51940184cb08",
   "value": "5ATcnSvzmd3vOw==",
   "timestamp": 1667984442624,
@@ -52,7 +52,7 @@ rpk topic consume telemetry
   "offset": 1
 }
 {
-  "topic": "telemetry",
+  "topic": "telemetry1",
   "key": "51940184cb08",
   "value": "9dtQdCH01KWaNQ==",
   "timestamp": 1667984443669,
