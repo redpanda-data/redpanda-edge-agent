@@ -61,13 +61,27 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 			fmt.Sprintf("%s.name", pathPrefix))
 		servers := config.String(
 			fmt.Sprintf("%s.bootstrap_servers", pathPrefix))
-		topics := config.Strings(
+		var topics = config.Strings(
 			fmt.Sprintf("%s.topics", pathPrefix))
+
+		// Remove empty topics
+		var t []string
+		for _, str := range topics {
+			if str != "" {
+				t = append(t, str)
+			}
+		}
+		topics = t
+
 		group := config.String(
 			fmt.Sprintf("%s.consumer_group_id", pathPrefix))
 
 		opts := []kgo.Opt{}
-		opts = append(opts, kgo.SeedBrokers(strings.Split(servers, ",")...))
+		opts = append(opts,
+			kgo.SeedBrokers(strings.Split(servers, ",")...),
+			kgo.RecordRetries(10),
+			kgo.UnknownTopicRetries(10),
+		)
 		if len(topics) > 0 {
 			opts = append(opts,
 				kgo.ConsumeTopics(topics...),
@@ -169,6 +183,22 @@ func backoff(exp *int) {
 	time.Sleep(time.Duration(backoff) * time.Second)
 }
 
+// Log with additional "id" field to identify whether the log message is coming
+// from the push routine, or the pull routine.
+func logWithId(lvl string, id string, msg string) {
+	level, _ := log.ParseLevel(lvl)
+	switch level {
+	case log.ErrorLevel:
+		log.WithField("id", id).Errorln(msg)
+	case log.WarnLevel:
+		log.WithField("id", id).Warnln(msg)
+	case log.InfoLevel:
+		log.WithField("id", id).Infoln(msg)
+	case log.DebugLevel:
+		log.WithField("id", id).Debugln(msg)
+	}
+}
+
 // Continuously fetch batches of records from the `src` cluster and forward
 // them to the `dst` cluster. Consumer offsets are only committed when the
 // `dst` cluster acknowledges the records.
@@ -178,75 +208,91 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 	var fetches kgo.Fetches
 	var sent bool
 	var committed bool
-	log.Infof("Forwarding records from '%s' to '%s'", src.name, dst.name)
+	logWithId("info", src.name,
+		fmt.Sprintf("Forwarding records from '%s' to '%s'", src.name, dst.name))
 	for {
 		if (sent && committed) || len(fetches.Records()) == 0 {
 			// Only poll when the previous fetches were successfully
-			// forwarded and committed
-			log.Debug("Polling for records...")
+			// sent and committed
+			logWithId("debug", src.name, "Polling for records...")
 			fetches = src.client.PollRecords(
 				ctx, config.Int("max_poll_records"))
 			if errs := fetches.Errors(); len(errs) > 0 {
 				for _, e := range errs {
 					if e.Err == context.Canceled {
-						log.Infof("Received interrupt: %s", e.Err)
+						logWithId("info", src.name,
+							fmt.Sprintf("Received interrupt: %s", e.Err))
 						return
 					}
-					log.Errorf("Fetch error: %s", e.Err)
+					logWithId("error", src.name,
+						fmt.Sprintf("Fetch error: %s", e.Err))
 				}
 				backoff(&errCount)
 			}
-			log.Debugf("Consumed %d records", len(fetches.Records()))
-			iter := fetches.RecordIter()
-			for !iter.Done() {
-				// If the record key is empty, then set it to the agent id to
-				// route the records to the same topic partition.
-				record := iter.Next()
-				if record.Key == nil {
-					record.Key = []byte(config.String("id"))
+			if len(fetches.Records()) > 0 {
+				logWithId("debug", src.name,
+					fmt.Sprintf("Consumed %d records", len(fetches.Records())))
+				iter := fetches.RecordIter()
+				for !iter.Done() {
+					// If the record key is empty, then set it to the agent id to
+					// route the records to the same topic partition.
+					record := iter.Next()
+					if record.Key == nil {
+						record.Key = []byte(config.String("id"))
+					}
 				}
+				sent = false
+				committed = false
+			} else {
+				// No records, skip iteration and poll for more records
+				continue
 			}
-			sent = false
-			committed = false
 		}
 
-		if !sent {
-			// Forward records
+		if !sent && !committed {
+			// Send records to destination
 			err := dst.client.ProduceSync(
 				ctx, fetches.Records()...).FirstErr()
 			if err != nil {
 				if err == context.Canceled {
-					log.Infof("Received interrupt: %s", err.Error())
+					logWithId("info", src.name,
+						fmt.Sprintf("Received interrupt: %s", err.Error()))
 					return
 				}
-				log.Errorf("Unable to forward %d record(s): %s",
-					len(fetches.Records()), err.Error())
+				logWithId("error", src.name,
+					fmt.Sprintf("Unable to send %d record(s) to '%s': %s",
+						len(fetches.Records()), dst.name, err.Error()))
 				backoff(&errCount)
 			} else {
 				sent = true
-				log.Debugf("Forwarded %d records", len(fetches.Records()))
+				logWithId("debug", src.name,
+					fmt.Sprintf("Sent %d records to '%s'",
+						len(fetches.Records()), dst.name))
 			}
 		}
 
 		if sent && !committed {
-			// Records have been forwarded successfully, so commit offsets
+			// Records have been sent successfully, so commit offsets
 			if log.GetLevel() == log.DebugLevel {
 				offsets := src.client.UncommittedOffsets()
 				offsetsJson, _ := json.Marshal(offsets)
-				log.Debugf("Committing offsets: %s", string(offsetsJson))
+				logWithId("debug", src.name,
+					fmt.Sprintf("Committing offsets: %s", string(offsetsJson)))
 			}
 			err := src.client.CommitUncommittedOffsets(ctx)
 			if err != nil {
 				if err == context.Canceled {
-					log.Infof("Received interrupt: %s", err.Error())
+					logWithId("info", src.name,
+						fmt.Sprintf("Received interrupt: %s", err.Error()))
 					return
 				}
-				log.Errorf("Unable to commit offsets: %s", err.Error())
+				logWithId("error", src.name,
+					fmt.Sprintf("Unable to commit offsets: %s", err.Error()))
 				backoff(&errCount)
 			} else {
 				errCount = 0 // Reset error counter
 				committed = true
-				log.Debugf("Offsets committed")
+				logWithId("debug", src.name, "Offsets committed")
 			}
 		}
 
