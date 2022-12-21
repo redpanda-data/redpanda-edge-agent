@@ -16,3 +16,5 @@ redpanda-edge-agent*
 # TLS certificates
 *.crt
 *.key
+*.jks
+*.p12

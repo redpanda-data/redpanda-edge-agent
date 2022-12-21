@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/knadh/koanf"
@@ -10,6 +11,7 @@ import (
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kversion"
 	"github.com/twmb/franz-go/pkg/sasl/aws"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/twmb/franz-go/pkg/sasl/scram"
@@ -148,6 +150,34 @@ func SASLOpt(config *SASLConfig, opts []kgo.Opt) []kgo.Opt {
 		default:
 			log.Fatalf("Unrecognized sasl method: %s", method)
 		}
+	}
+	return opts
+}
+
+// Set the maximum Kafka protocol version to try
+func MaxVersionOpt(version string, opts []kgo.Opt) []kgo.Opt {
+	ver := strings.ToLower(version)
+	ver = strings.ReplaceAll(ver, "v", "")
+	ver = strings.ReplaceAll(ver, ".", "")
+	ver = strings.ReplaceAll(ver, "_", "")
+	verNum, _ := strconv.Atoi(ver)
+	switch verNum {
+	case 330:
+		opts = append(opts, kgo.MaxVersions(kversion.V3_3_0()))
+	case 320:
+		opts = append(opts, kgo.MaxVersions(kversion.V3_2_0()))
+	case 310:
+		opts = append(opts, kgo.MaxVersions(kversion.V3_1_0()))
+	case 300:
+		opts = append(opts, kgo.MaxVersions(kversion.V3_0_0()))
+	case 280:
+		opts = append(opts, kgo.MaxVersions(kversion.V2_8_0()))
+	case 270:
+		opts = append(opts, kgo.MaxVersions(kversion.V2_7_0()))
+	case 260:
+		opts = append(opts, kgo.MaxVersions(kversion.V2_6_0()))
+	default:
+		opts = append(opts, kgo.MaxVersions(kversion.Stable()))
 	}
 	return opts
 }

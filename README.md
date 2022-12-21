@@ -84,6 +84,8 @@ destination:
     name: "destination"
     # List of Redpanda nodes
     bootstrap_servers: 127.0.0.1:29092
+    # Maximum Kafka protocol version. E.g. "3.0.0"
+    max_version: ""
     # List of topics to pull from the destination cluster (to create a
     # bidirectional flow).
     topics:

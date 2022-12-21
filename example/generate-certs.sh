@@ -115,6 +115,18 @@ openssl ca \
 -subj "/O=redpanda/CN=redpanda_destination" \
 -batch
 
+# Generate Java keystores for a Kafka destination
+openssl pkcs12 -export -inkey $CERTS_DIR/dst.key -in $CERTS_DIR/dst.crt -out $CERTS_DIR/dst.p12 -password pass:apache
+keytool -importkeystore \
+-srckeystore $CERTS_DIR/dst.p12 \
+-srcstoretype pkcs12 \
+-srcstorepass apache \
+-destkeystore $CERTS_DIR/kafka.keystore.jks \
+-deststorepass apache \
+-destkeypass apache
+
+keytool -keystore $CERTS_DIR/kafka.truststore.jks -alias CARoot -import -file $CERTS_DIR/ca.crt -noprompt -storepass apache
+
 # Generate RSA private key for the agent
 openssl genrsa -out $CERTS_DIR/agent.key 2048
 chmod 400 $CERTS_DIR/agent.key

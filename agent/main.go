@@ -91,6 +91,10 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 				kgo.DisableAutoCommit(),
 				kgo.BlockRebalanceOnPoll())
 		}
+		maxVersionPath := fmt.Sprintf("%s.max_version", pathPrefix)
+		if config.Exists(maxVersionPath) {
+			opts = MaxVersionOpt(config.String(maxVersionPath), opts)
+		}
 		tlsPath := fmt.Sprintf("%s.tls", pathPrefix)
 		if config.Exists(tlsPath) {
 			tlsConfig := TLSConfig{}
