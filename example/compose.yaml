@@ -7,7 +7,7 @@ networks:
         gateway: "172.24.1.1"
 services:
   redpanda_source:
-    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    image: docker.vectorized.io/vectorized/redpanda:latest
     container_name: redpanda_source
     command:
       - redpanda
@@ -40,8 +40,9 @@ services:
     ports:
       - "19092:19092"
       - "19644:9644"
+      - "18081:8081"
   redpanda_destination:
-    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    image: docker.vectorized.io/vectorized/redpanda:latest
     container_name: redpanda_destination
     command:
       - redpanda
@@ -71,3 +72,4 @@ services:
     ports:
       - "29092:29092"
       - "29644:9644"
+      - "28081:8081"

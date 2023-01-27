@@ -2,9 +2,11 @@ package main
 
 import (
 	"crypto/tls"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -19,6 +21,77 @@ import (
 
 	log "github.com/sirupsen/logrus"
 )
+
+const schemaTopic = "_schemas"
+
+var (
+	lock   = &sync.Mutex{}
+	config = koanf.New(".")
+)
+
+// Configuration prefix
+type Prefix string
+
+const (
+	Source      Prefix = "source"
+	Destination Prefix = "destination"
+)
+
+type Direction int8
+
+const (
+	Push Direction = iota // Push from source topic to destination topic
+	Pull                  // Pull from destination topic to source topic
+)
+
+func (d Direction) String() string {
+	switch d {
+	case Push:
+		return "push"
+	case Pull:
+		return "pull"
+	default:
+		return fmt.Sprintf("%d", int(d))
+	}
+}
+
+type Topic struct {
+	sourceName      string
+	destinationName string
+	direction       Direction
+}
+
+func (t Topic) String() string {
+	if t.direction == Push {
+		return fmt.Sprintf("%s > %s",
+			t.sourceName, t.destinationName)
+	} else {
+		return fmt.Sprintf("%s < %s",
+			t.sourceName, t.destinationName)
+	}
+}
+
+// Returns the name of the topic to consume from.
+// If the topic direction is `Push` then consume from the source topic.
+// If the topic direction is `Pull` then consume from the destination topic.
+func (t Topic) consumeFrom() string {
+	if t.direction == Push {
+		return t.sourceName
+	} else {
+		return t.destinationName
+	}
+}
+
+// Returns the name of the topic to produce to.
+// If the topic direction is `Push` then produce to the destination topic.
+// If the topic direction is `Pull` then produce to the source topic.
+func (t Topic) produceTo() string {
+	if t.direction == Push {
+		return t.destinationName
+	} else {
+		return t.sourceName
+	}
+}
 
 type SASLConfig struct {
 	SaslMethod   string `koanf:"sasl_method"`
@@ -58,31 +131,95 @@ var defaultID = func() string {
 }()
 
 // Initialize the agent configuration from the provided .yaml file
-func InitConfig(path *string, config *koanf.Koanf) {
+func InitConfig(path *string) {
+	lock.Lock()
+	defer lock.Unlock()
+
 	config.Load(defaultConfig, nil)
 	log.Infof("Init config from file: %s", *path)
 	if err := config.Load(file.Provider(*path), yaml.Parser()); err != nil {
 		log.Errorf("Error loading config: %v", err)
 	}
-	validate(config)
+	validate()
 	log.Debugf(config.Sprint())
 }
 
+// Parse topic configuration
+func parseTopics(topics []string, direction Direction) []Topic {
+	var all []Topic
+	for _, t := range topics {
+		s := strings.Split(t, ":")
+		if len(s) == 1 {
+			all = append(all, Topic{
+				sourceName:      strings.TrimSpace(s[0]),
+				destinationName: strings.TrimSpace(s[0]),
+				direction:       direction,
+			})
+		} else if len(s) == 2 {
+			// Push from source topic to destination topic
+			var src = strings.TrimSpace(s[0])
+			var dst = strings.TrimSpace(s[1])
+			if direction == Pull {
+				// Pull from destination topic to source topic
+				src = strings.TrimSpace(s[1])
+				dst = strings.TrimSpace(s[0])
+			}
+			all = append(all, Topic{
+				sourceName:      src,
+				destinationName: dst,
+				direction:       direction,
+			})
+		} else {
+			log.Fatalf("Incorrect topic configuration: %s", t)
+		}
+	}
+	return all
+}
+
+func GetTopics(p Prefix) []Topic {
+	if p == Source {
+		return parseTopics(config.Strings("source.topics"), Push)
+	} else {
+		return parseTopics(config.Strings("destination.topics"), Pull)
+	}
+}
+
+func AllTopics() []Topic {
+	return append(GetTopics(Source), GetTopics(Destination)...)
+}
+
+// Check for circular dependency
+// t1.src > t1.dst
+// t2.src < t2.dst
+func circular(t1, t2 *Topic) bool {
+	if t1.direction != t2.direction {
+		if t1.sourceName == t2.sourceName {
+			if t1.destinationName == t2.destinationName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Validate the config
-func validate(config *koanf.Koanf) {
+func validate() {
 	config.MustString("id")
 	config.MustString("source.bootstrap_servers")
 	config.MustString("destination.bootstrap_servers")
 
-	sourceTopics := config.Strings("source.topics")
-	destinationTopics := config.Strings("destination.topics")
-	if len(sourceTopics) == 0 && len(destinationTopics) == 0 {
-		log.Fatal("No outbound or inbound topics configured")
+	topics := AllTopics()
+	if len(topics) == 0 {
+		log.Fatal("No push or pull topics configured")
 	}
-	for _, s := range sourceTopics {
-		for _, d := range destinationTopics {
-			if s == d {
-				log.Fatal("Topic circular dependency configured")
+	for i, t1 := range topics {
+		for k, t2 := range topics {
+			if (i != k) && (t1 == t2) {
+				log.Fatalf("Duplicate topic configured: %s", t1.String())
+			}
+			if circular(&t1, &t2) {
+				log.Fatalf("Topic circular dependency configured: (%s) (%s)",
+					t1.String(), t2.String())
 			}
 		}
 	}
