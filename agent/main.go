@@ -74,8 +74,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, prefix Prefix) {
 		opts := []kgo.Opt{}
 		opts = append(opts,
 			kgo.SeedBrokers(strings.Split(servers, ",")...),
-			kgo.RecordRetries(10),
-			kgo.UnknownTopicRetries(10),
+			kgo.ProducerBatchCompression(kgo.NoCompression()),
 		)
 		if len(topics) > 0 {
 			opts = append(opts,
@@ -147,6 +146,7 @@ func checkTopics(cluster *Redpanda) {
 		if topic.sourceName == schemaTopic ||
 			topic.destinationName == schemaTopic {
 			// Skip _schemas internal topic
+			log.Debugf("Skip creating '%s' topic", schemaTopic)
 			continue
 		}
 		if cluster.prefix == Source {
