@@ -18,7 +18,7 @@ destination:
   # List of inbound topics to pull from destination to source
   topics:
     - configA
-    - configB:configC
+    - _schemas
   tls:
     enabled: true
     client_key: "/etc/redpanda/certs/agent.key"

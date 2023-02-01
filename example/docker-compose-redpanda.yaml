@@ -7,7 +7,7 @@ networks:
         gateway: "172.24.1.1"
 services:
   redpanda_source:
-    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
     container_name: redpanda_source
     command:
       - redpanda
@@ -39,37 +39,37 @@ services:
       - ./supervisor.conf:/etc/supervisord.conf
     ports:
       - "19092:19092"
-  zookeeper:
-    image: bitnami/zookeeper:3.8.0
-    container_name: zookeeper
-    networks:
-      redpanda_network:
-        ipv4_address: "172.24.1.30"
-    ports:
-      - "2181:2181"
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-  kafka:
-    image: bitnami/kafka:3.3.1
-    container_name: kafka_destination
-    environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=172.24.1.30:2181
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:29092,INTERNAL://:9092
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,INTERNAL:SSL
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:29092,INTERNAL://172.24.1.20:9092
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_CERTIFICATE_PASSWORD=apache
-      - KAFKA_CFG_INTER_BROKER_PROTOCOL_VERSION=2.6
-      - BITNAMI_DEBUG=true
+      - "19644:9644"
+      - "18081:8081"
+  redpanda_destination:
+    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
+    container_name: redpanda_destination
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://172.24.1.20:29092
+      - --advertise-kafka-addr
+      - internal://172.24.1.20:9092,external://127.0.0.1:29092
+      - --overprovisioned
+      - --check=false
+      - --set redpanda.auto_create_topics_enabled=true
+      - "--set redpanda.kafka_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/dst.crt',\
+          'key_file':'/etc/redpanda/certs/dst.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
+      - "--set redpanda.admin_api_tls={\
+          'name':'internal','enabled':true,'require_client_auth':true,\
+          'cert_file':'/etc/redpanda/certs/dst.crt',\
+          'key_file':'/etc/redpanda/certs/dst.key',\
+          'truststore_file':'/etc/redpanda/certs/ca.crt'}"
     networks:
       redpanda_network:
         ipv4_address: "172.24.1.20"
     volumes:
-      - "./certs/kafka.keystore.jks:/opt/bitnami/kafka/config/certs/kafka.keystore.jks"
-      - "./certs/kafka.truststore.jks:/opt/bitnami/kafka/config/certs/kafka.truststore.jks"
+      - ./certs:/etc/redpanda/certs
     ports:
       - "29092:29092"
-    depends_on:
-      - zookeeper
+      - "29644:9644"
+      - "28081:8081"

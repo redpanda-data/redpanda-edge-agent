@@ -1,6 +1,6 @@
 # Edge Agent Example
 
-This [Docker Compose](.compose.yaml) file spins up a local environment for testing the agent. The environment starts two containers:
+This [Docker Compose](.docker-compose-redpanda.yaml) file spins up a local environment for testing the agent. The environment starts two containers:
 
 - `redpanda-source`: simulates an IoT device that runs a single-node Redpanda instance and the agent to store and forward messages
 - `redpanda-destination`: simulates a central Redpanda cluster that aggregates messages from all of the IoT devices
@@ -14,7 +14,7 @@ This [Docker Compose](.compose.yaml) file spins up a local environment for testi
 
 ```bash
 cd example
-docker-compose up -d
+docker-compose -f docker-compose-redpanda.yaml up -d
 [+] Running 3/3
  ⠿ Network example_redpanda_network  Created
  ⠿ Container redpanda_source         Started
