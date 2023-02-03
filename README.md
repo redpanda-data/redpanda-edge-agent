@@ -59,9 +59,14 @@ source:
     # List of Redpanda nodes (typically a single node at the edge).
     bootstrap_servers: 127.0.0.1:19092
     # List of topics to forward to the destination cluster.
+    #   - Specify a single topic name to forward events to a topic with the same
+    #     name on the destination cluster (e.g. "telemetryA").
+    #   - Specify a pair of topic names, separated by a colon, to forward events
+    #     to a topic with a different name on the destination cluster
+    #     (e.g. "telemetryB:telemetryC").
     topics:
-        - telemetry1
-        - telemetry2
+        - telemetryA
+        - telemetryB:telemetryC
     # Set the consumer group for the agent to join and consume in. Defaults to
     # the agent id if not set.
     consumer_group_id: ""
@@ -88,9 +93,14 @@ destination:
     max_version: ""
     # List of topics to pull from the destination cluster (to create a
     # bidirectional flow).
+    #   - Specify a single topic name to pull events to a topic with the same
+    #     name on the source cluster (e.g. "configA").
+    #   - Specify a pair of topic names, separated by a colon, to pull events
+    #     to a topic with a different name on the source cluster
+    #     (e.g. "configB:configC").
     topics:
-        - config1
-        - config2
+        - configA
+        - configB:configC
     # Set the consumer group for the agent to join and consume in. Defaults to
     # the agent id if not set.
     consumer_group_id: ""

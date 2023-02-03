@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/knadh/koanf"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -21,13 +20,13 @@ import (
 
 type Redpanda struct {
 	name   string
-	topics []string
+	prefix Prefix
+	topics []Topic
 	client *kgo.Client
 	adm    *kadm.Client
 }
 
 var (
-	config          = koanf.New(".")
 	source          Redpanda
 	sourceOnce      sync.Once
 	destination     Redpanda
@@ -46,7 +45,7 @@ func shutdown() {
 
 // Creates new Kafka and Admin clients to communicate with a cluster.
 //
-// The `pathPrefix` must be set to either `source` or `destination` as it
+// The `prefix` must be set to either `Source` or `Destination` as it
 // determines what settings are read from the configuration.
 //
 // The topics listed in `source.topics` are the topics that will be pushed by
@@ -54,54 +53,50 @@ func shutdown() {
 //
 // The topics listed in `destination.topics` are the topics that will be pulled
 // by the agent from the destination cluster to the source cluster.
-func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
+func initClient(rp *Redpanda, mutex *sync.Once, prefix Prefix) {
 	mutex.Do(func() {
 		var err error
 		name := config.String(
-			fmt.Sprintf("%s.name", pathPrefix))
+			fmt.Sprintf("%s.name", prefix))
 		servers := config.String(
-			fmt.Sprintf("%s.bootstrap_servers", pathPrefix))
-		var topics = config.Strings(
-			fmt.Sprintf("%s.topics", pathPrefix))
+			fmt.Sprintf("%s.bootstrap_servers", prefix))
 
-		// Remove empty topics
-		var t []string
-		for _, str := range topics {
-			if str != "" {
-				t = append(t, str)
-			}
+		topics := GetTopics(prefix)
+		var consumeTopics []string
+		for _, t := range topics {
+			consumeTopics = append(consumeTopics, t.consumeFrom())
+			log.Infof("Added %s topic: %s", t.direction.String(), t.String())
 		}
-		topics = t
 
 		group := config.String(
-			fmt.Sprintf("%s.consumer_group_id", pathPrefix))
+			fmt.Sprintf("%s.consumer_group_id", prefix))
 
 		opts := []kgo.Opt{}
 		opts = append(opts,
 			kgo.SeedBrokers(strings.Split(servers, ",")...),
-			kgo.RecordRetries(10),
-			kgo.UnknownTopicRetries(10),
+			// https://github.com/redpanda-data/redpanda/issues/8546
+			kgo.ProducerBatchCompression(kgo.NoCompression()),
 		)
 		if len(topics) > 0 {
 			opts = append(opts,
-				kgo.ConsumeTopics(topics...),
+				kgo.ConsumeTopics(consumeTopics...),
 				kgo.ConsumerGroup(group),
 				kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 				kgo.SessionTimeout(60000*time.Millisecond),
 				kgo.DisableAutoCommit(),
 				kgo.BlockRebalanceOnPoll())
 		}
-		maxVersionPath := fmt.Sprintf("%s.max_version", pathPrefix)
+		maxVersionPath := fmt.Sprintf("%s.max_version", prefix)
 		if config.Exists(maxVersionPath) {
 			opts = MaxVersionOpt(config.String(maxVersionPath), opts)
 		}
-		tlsPath := fmt.Sprintf("%s.tls", pathPrefix)
+		tlsPath := fmt.Sprintf("%s.tls", prefix)
 		if config.Exists(tlsPath) {
 			tlsConfig := TLSConfig{}
 			config.Unmarshal(tlsPath, &tlsConfig)
 			opts = TLSOpt(&tlsConfig, opts)
 		}
-		saslPath := fmt.Sprintf("%s.sasl", pathPrefix)
+		saslPath := fmt.Sprintf("%s.sasl", prefix)
 		if config.Exists(saslPath) {
 			saslConfig := SASLConfig{}
 			config.Unmarshal(saslPath, &saslConfig)
@@ -109,6 +104,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 		}
 
 		rp.name = name
+		rp.prefix = prefix
 		rp.topics = topics
 		rp.client, err = kgo.NewClient(opts...)
 		if err != nil {
@@ -117,7 +113,7 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 		// Check connectivity to cluster
 		if err = rp.client.Ping(context.Background()); err != nil {
 			log.Errorf("Unable to ping %s cluster: %s",
-				pathPrefix, err.Error())
+				prefix, err.Error())
 		}
 
 		rp.adm = kadm.NewClient(rp.client)
@@ -128,21 +124,50 @@ func initClient(rp *Redpanda, mutex *sync.Once, pathPrefix string) {
 		log.Infof("Created %s client", name)
 		for _, broker := range brokers {
 			brokerJson, _ := json.Marshal(broker)
-			log.Infof("\t %s broker: %s", pathPrefix, string(brokerJson))
+			log.Debugf("%s broker: %s", prefix, string(brokerJson))
 		}
 	})
 }
 
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
 // Check the topics exist on the given cluster. If the topics to not exist then
 // this function will attempt to create them if configured to do so.
-func checkTopics(cluster *Redpanda, topics []string) {
+func checkTopics(cluster *Redpanda) {
 	ctx := context.Background()
-	topicDetails, err := cluster.adm.ListTopics(ctx, topics...)
+	var createTopics []string
+	for _, topic := range AllTopics() {
+		if topic.sourceName == schemaTopic ||
+			topic.destinationName == schemaTopic {
+			// Skip _schemas internal topic
+			log.Debugf("Skip creating '%s' topic", schemaTopic)
+			continue
+		}
+		if cluster.prefix == Source {
+			if !contains(createTopics, topic.sourceName) {
+				createTopics = append(createTopics, topic.sourceName)
+			}
+		} else if cluster.prefix == Destination {
+			if !contains(createTopics, topic.destinationName) {
+				createTopics = append(createTopics, topic.destinationName)
+			}
+		}
+	}
+
+	topicDetails, err := cluster.adm.ListTopics(ctx, createTopics...)
 	if err != nil {
 		log.Errorf("Unable to list topics on %s: %v", cluster.name, err)
 		return
 	}
-	for _, topic := range topics {
+
+	for _, topic := range createTopics {
 		if !topicDetails.Has(topic) {
 			if config.Exists("create_topics") {
 				// Use the clusters default partition and replication settings
@@ -174,9 +199,10 @@ func checkTopics(cluster *Redpanda, topics []string) {
 // a maximum number of seconds set by 'maxBackoffSec'.
 //
 // For example:
-//   - 2 fetch errors = 2 ^ 2 = 4 second backoff
-//   - 3 fetch errors = 3 ^ 2 = 9 second backoff
-//   - 4 fetch errors = 4 ^ 2 = 16 second backoff
+//
+//	2 fetch errors = 2 ^ 2 = 4 second backoff
+//	3 fetch errors = 3 ^ 2 = 9 second backoff
+//	4 fetch errors = 4 ^ 2 = 16 second backoff
 func backoff(exp *int) {
 	*exp += 1
 	backoff := math.Pow(float64(*exp), 2)
@@ -200,6 +226,8 @@ func logWithId(lvl string, id string, msg string) {
 		log.WithField("id", id).Infoln(msg)
 	case log.DebugLevel:
 		log.WithField("id", id).Debugln(msg)
+	case log.TraceLevel:
+		log.WithField("id", id).Traceln(msg)
 	}
 }
 
@@ -214,6 +242,12 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 	var committed bool
 	logWithId("info", src.name,
 		fmt.Sprintf("Forwarding records from '%s' to '%s'", src.name, dst.name))
+
+	topicMap := make(map[string]string)
+	for _, t := range AllTopics() {
+		topicMap[t.consumeFrom()] = t.produceTo()
+	}
+
 	for {
 		if (sent && committed) || len(fetches.Records()) == 0 {
 			// Only poll when the previous fetches were successfully
@@ -238,9 +272,17 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 					fmt.Sprintf("Consumed %d records", len(fetches.Records())))
 				iter := fetches.RecordIter()
 				for !iter.Done() {
+					record := iter.Next()
+					// Change the topic name if necessary
+					changeName := topicMap[record.Topic]
+					if changeName != "" {
+						logWithId("trace", src.name,
+							fmt.Sprintf("Mapping topic name '%s' to '%s'",
+								record.Topic, changeName))
+						record.Topic = changeName
+					}
 					// If the record key is empty, then set it to the agent id to
 					// route the records to the same topic partition.
-					record := iter.Next()
 					if record.Key == nil {
 						record.Key = []byte(config.String("id"))
 					}
@@ -264,23 +306,23 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 					return
 				}
 				logWithId("error", src.name,
-					fmt.Sprintf("Unable to send %d record(s) to '%s': %s",
+					fmt.Sprintf("Unable to send %d record(s) to %s: %s",
 						len(fetches.Records()), dst.name, err.Error()))
 				backoff(&errCount)
 			} else {
 				sent = true
 				logWithId("debug", src.name,
-					fmt.Sprintf("Sent %d records to '%s'",
+					fmt.Sprintf("Sent %d records to %s",
 						len(fetches.Records()), dst.name))
 			}
 		}
 
 		if sent && !committed {
 			// Records have been sent successfully, so commit offsets
-			if log.GetLevel() == log.DebugLevel {
+			if log.GetLevel() == log.TraceLevel {
 				offsets := src.client.UncommittedOffsets()
 				offsetsJson, _ := json.Marshal(offsets)
-				logWithId("debug", src.name,
+				logWithId("trace", src.name,
 					fmt.Sprintf("Committing offsets: %s", string(offsetsJson)))
 			}
 			err := src.client.CommitUncommittedOffsets(ctx)
@@ -314,14 +356,12 @@ func main() {
 	logLevel, _ := log.ParseLevel(*logLevelStr)
 	log.SetLevel(logLevel)
 
-	InitConfig(configFile, config)
-	initClient(&source, &sourceOnce, "source")
-	initClient(&destination, &destinationOnce, "destination")
+	InitConfig(configFile)
+	initClient(&source, &sourceOnce, Source)
+	initClient(&destination, &destinationOnce, Destination)
 
-	allTopics := append([]string(nil), source.topics...)
-	allTopics = append(allTopics, destination.topics...)
-	checkTopics(&source, allTopics)
-	checkTopics(&destination, allTopics)
+	checkTopics(&source)
+	checkTopics(&destination)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(), os.Interrupt, os.Kill)

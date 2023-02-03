@@ -7,7 +7,7 @@ networks:
         gateway: "172.24.1.1"
 services:
   redpanda_source:
-    image: docker.vectorized.io/vectorized/redpanda:v22.2.7
+    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
     container_name: redpanda_source
     command:
       - redpanda
@@ -39,8 +39,10 @@ services:
       - ./supervisor.conf:/etc/supervisord.conf
     ports:
       - "19092:19092"
+      - "19644:9644"
+      - "18081:8081"
   zookeeper:
-    image: bitnami/zookeeper:3.8.0
+    image: bitnami/zookeeper:3.8.1
     container_name: zookeeper
     networks:
       redpanda_network:
@@ -50,7 +52,7 @@ services:
     environment:
       - ALLOW_ANONYMOUS_LOGIN=yes
   kafka:
-    image: bitnami/kafka:3.3.1
+    image: bitnami/kafka:3.3.2
     container_name: kafka_destination
     environment:
       - KAFKA_BROKER_ID=1
@@ -61,7 +63,7 @@ services:
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:29092,INTERNAL://172.24.1.20:9092
       - ALLOW_PLAINTEXT_LISTENER=yes
       - KAFKA_CERTIFICATE_PASSWORD=apache
-      - KAFKA_CFG_INTER_BROKER_PROTOCOL_VERSION=2.6
+      # - KAFKA_CFG_INTER_BROKER_PROTOCOL_VERSION=2.6
       - BITNAMI_DEBUG=true
     networks:
       redpanda_network:
@@ -71,5 +73,35 @@ services:
       - "./certs/kafka.truststore.jks:/opt/bitnami/kafka/config/certs/kafka.truststore.jks"
     ports:
       - "29092:29092"
+      - "29644:9644"
     depends_on:
+      - zookeeper
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.3.1
+    container_name: schema_registry
+    environment:
+      - SCHEMA_REGISTRY_HOST_NAME=schema_registry
+      - SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL=SSL
+      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=172.24.1.20:9092
+      - SCHEMA_REGISTRY_LISTENERS=http://0.0.0.0:8081
+      - SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_LOCATION=/etc/kafka/secrets/schema-registry.truststore.jks
+      - SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_PASSWORD=apache
+      - SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_LOCATION=/etc/kafka/secrets/schema-registry.keystore.jks
+      - SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_PASSWORD=apache
+      - SCHEMA_REGISTRY_SSL_TRUSTSTORE_LOCATION=/etc/kafka/secrets/schema-registry.truststore.jks
+      - SCHEMA_REGISTRY_SSL_TRUSTSTORE_PASSWORD=apache
+      - SCHEMA_REGISTRY_SSL_KEYSTORE_LOCATION=/etc/kafka/secrets/schema-registry.keystore.jks
+      - SCHEMA_REGISTRY_SSL_KEYSTORE_PASSWORD=apache
+      - SCHEMA_REGISTRY_KAFKASTORE_TOPIC=_schemas
+      - SCHEMA_REGISTRY_DEBUG=true
+    networks:
+      redpanda_network:
+        ipv4_address: "172.24.1.40"
+    volumes:
+      - "./certs/kafka.keystore.jks:/etc/kafka/secrets/schema-registry.keystore.jks"
+      - "./certs/kafka.truststore.jks:/etc/kafka/secrets/schema-registry.truststore.jks"
+    ports:
+      - "28081:8081"
+    depends_on:
+      - kafka
       - zookeeper

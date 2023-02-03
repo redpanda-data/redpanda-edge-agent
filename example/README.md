@@ -1,6 +1,6 @@
 # Edge Agent Example
 
-This [Docker Compose](.compose.yaml) file spins up a local environment for testing the agent. The environment starts two containers:
+This [Docker Compose](.docker-compose-redpanda.yaml) file spins up a local environment for testing the agent. The environment starts two containers:
 
 - `redpanda-source`: simulates an IoT device that runs a single-node Redpanda instance and the agent to store and forward messages
 - `redpanda-destination`: simulates a central Redpanda cluster that aggregates messages from all of the IoT devices
@@ -14,7 +14,7 @@ This [Docker Compose](.compose.yaml) file spins up a local environment for testi
 
 ```bash
 cd example
-docker-compose up -d
+docker-compose -f docker-compose-redpanda.yaml up -d
 [+] Running 3/3
  ⠿ Network example_redpanda_network  Created
  ⠿ Container redpanda_source         Started
@@ -23,39 +23,39 @@ docker-compose up -d
 
 ## Test the agent
 
-Open a new terminal and produce some messages to the source's `telemetry1` topic (note that the example [agent](./agent.yaml) is configured to create the topics on startup):
+Open a new terminal and produce some messages to the source's `telemetryB` topic (note that the example [agent](./agent.yaml) is configured to create the topics on startup):
 
 ```bash
 export REDPANDA_BROKERS=localhost:19092
-for i in {1..60}; do echo $(cat /dev/urandom | head -c10 | base64) | rpk topic produce telemetry1; sleep 1; done
+for i in {1..60}; do echo $(cat /dev/urandom | head -c10 | base64) | rpk topic produce telemetryB; sleep 1; done
 ```
 
 The agent will forward the messages to a topic with the same name on the destination. Open a second terminal and consume the messages:
 
 ```bash
 export REDPANDA_BROKERS=localhost:29092
-rpk topic consume telemetry1
+rpk topic consume telemetryC
 {
-  "topic": "telemetry1",
-  "key": "51940184cb08",
-  "value": "q/F5LP5DmnIPog==",
-  "timestamp": 1667984441252,
+  "topic": "telemetryC",
+  "key": "a0f1fd421b85",
+  "value": "aZ7NEkkd977GXQ==",
+  "timestamp": 1674753398569,
   "partition": 0,
   "offset": 0
 }
 {
-  "topic": "telemetry1",
-  "key": "51940184cb08",
-  "value": "5ATcnSvzmd3vOw==",
-  "timestamp": 1667984442624,
+  "topic": "telemetryC",
+  "key": "a0f1fd421b85",
+  "value": "cJRS+n9mJCAxzg==",
+  "timestamp": 1674753399965,
   "partition": 0,
   "offset": 1
 }
 {
-  "topic": "telemetry1",
-  "key": "51940184cb08",
-  "value": "9dtQdCH01KWaNQ==",
-  "timestamp": 1667984443669,
+  "topic": "telemetryC",
+  "key": "a0f1fd421b85",
+  "value": "sNPcw6YWBpQl9g==",
+  "timestamp": 1674753401025,
   "partition": 0,
   "offset": 2
 }
@@ -66,33 +66,32 @@ rpk topic consume telemetry1
 
 ```bash
 docker exec redpanda_source tail -100f /var/lib/redpanda/data/agent.log
-
-time="2022-11-18T10:07:12Z" level=info msg="Init config from file: /etc/redpanda/agent.yaml"
-time="2022-11-18T10:07:12Z" level=debug msg="create_topics -> true\ndestination.bootstrap_servers -> 172.24.1.20:9092\ndestination.consumer_group_id -> 32f8d5c415cb\ndestination.name -> destination\ndestination.tls.ca_cert -> /etc/redpanda/certs/ca.crt\ndestination.tls.client_cert -> /etc/redpanda/certs/agent.crt\ndestination.tls.client_key -> /etc/redpanda/certs/agent.key\ndestination.tls.enabled -> true\ndestination.topics -> [config1 config2]\nid -> 32f8d5c415cb\nmax_backoff_secs -> 600\nmax_poll_records -> 1000\nsource.bootstrap_servers -> 172.24.1.10:9092\nsource.consumer_group_id -> 32f8d5c415cb\nsource.name -> source\nsource.tls.ca_cert -> /etc/redpanda/certs/ca.crt\nsource.tls.client_cert -> /etc/redpanda/certs/agent.crt\nsource.tls.client_key -> /etc/redpanda/certs/agent.key\nsource.tls.enabled -> true\nsource.topics -> [telemetry1 telemetry2]\n"
-time="2022-11-18T10:07:12Z" level=info msg="Created source client"
-time="2022-11-18T10:07:12Z" level=info msg="\t source broker: {\"NodeID\":1,\"Port\":9092,\"Host\":\"172.24.1.10\",\"Rack\":null}"
-time="2022-11-18T10:07:12Z" level=info msg="Created destination client"
-time="2022-11-18T10:07:12Z" level=info msg="\t destination broker: {\"NodeID\":1,\"Port\":9092,\"Host\":\"172.24.1.20\",\"Rack\":null}"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'telemetry1' on source"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'telemetry2' on source"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'config1' on source"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'config2' on source"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'telemetry1' on destination"
-time="2022-11-18T10:07:12Z" level=info msg="Created topic 'telemetry2' on destination"
-time="2022-11-18T10:07:13Z" level=info msg="Created topic 'config1' on destination"
-time="2022-11-18T10:07:13Z" level=info msg="Created topic 'config2' on destination"
-time="2022-11-18T10:07:13Z" level=info msg="Forwarding records from 'destination' to 'source'"
-time="2022-11-18T10:07:13Z" level=debug msg="Polling for records..."
-time="2022-11-18T10:07:13Z" level=info msg="Forwarding records from 'source' to 'destination'"
-time="2022-11-18T10:07:13Z" level=debug msg="Polling for records..."
-time="2022-11-18T10:08:24Z" level=debug msg="Consumed 1 records"
-time="2022-11-18T10:08:25Z" level=debug msg="Forwarded 1 records"
-time="2022-11-18T10:08:25Z" level=debug msg="Committing offsets: {\"telemetry1\":{\"0\":{\"Epoch\":1,\"Offset\":1}}}"
-time="2022-11-18T10:08:25Z" level=debug msg="Offsets committed"
-time="2022-11-18T10:08:25Z" level=debug msg="Polling for records..."
-time="2022-11-18T10:08:25Z" level=debug msg="Consumed 1 records"
-time="2022-11-18T10:08:25Z" level=debug msg="Forwarded 1 records"
-time="2022-11-18T10:08:25Z" level=debug msg="Committing offsets: {\"telemetry1\":{\"0\":{\"Epoch\":1,\"Offset\":2}}}"
-time="2022-11-18T10:08:25Z" level=debug msg="Offsets committed"
-time="2022-11-18T10:08:25Z" level=debug msg="Polling for records..."
+time="2023-01-26T17:16:15Z" level=info msg="Init config from file: /etc/redpanda/agent.yaml"
+time="2023-01-26T17:16:15Z" level=debug msg="create_topics -> true\ndestination.bootstrap_servers -> 172.24.1.20:9092\ndestination.consumer_group_id -> a0f1fd421b85\ndestination.max_version -> 3.0.0\ndestination.name -> destination\ndestination.tls.ca_cert -> /etc/redpanda/certs/ca.crt\ndestination.tls.client_cert -> /etc/redpanda/certs/agent.crt\ndestination.tls.client_key -> /etc/redpanda/certs/agent.key\ndestination.tls.enabled -> true\ndestination.topics -> [configA configB:configA]\nid -> a0f1fd421b85\nmax_backoff_secs -> 600\nmax_poll_records -> 1000\nsource.bootstrap_servers -> 172.24.1.10:9092\nsource.consumer_group_id -> a0f1fd421b85\nsource.name -> source\nsource.tls.ca_cert -> /etc/redpanda/certs/ca.crt\nsource.tls.client_cert -> /etc/redpanda/certs/agent.crt\nsource.tls.client_key -> /etc/redpanda/certs/agent.key\nsource.tls.enabled -> true\nsource.topics -> [telemetryA telemetryB:telemetryC]\n"
+time="2023-01-26T17:16:15Z" level=info msg="Added push topic: telemetryA > telemetryA"
+time="2023-01-26T17:16:15Z" level=info msg="Added push topic: telemetryB > telemetryC"
+time="2023-01-26T17:16:15Z" level=info msg="Created source client"
+time="2023-01-26T17:16:15Z" level=debug msg="source broker: {\"NodeID\":0,\"Port\":9092,\"Host\":\"172.24.1.10\",\"Rack\":null}"
+time="2023-01-26T17:16:15Z" level=info msg="Added pull topic: configA < configA"
+time="2023-01-26T17:16:15Z" level=info msg="Added pull topic: configA < configB"
+time="2023-01-26T17:16:15Z" level=info msg="Created destination client"
+time="2023-01-26T17:16:15Z" level=debug msg="destination broker: {\"NodeID\":0,\"Port\":9092,\"Host\":\"172.24.1.20\",\"Rack\":null}"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'telemetryA' on source"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'telemetryB' on source"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'configA' on source"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'telemetryA' on destination"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'telemetryC' on destination"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'configA' on destination"
+time="2023-01-26T17:16:15Z" level=info msg="Created topic 'configB' on destination"
+time="2023-01-26T17:16:15Z" level=info msg="Forwarding records from 'destination' to 'source'" id=destination
+time="2023-01-26T17:16:15Z" level=info msg="Forwarding records from 'source' to 'destination'" id=source
+time="2023-01-26T17:16:15Z" level=debug msg="Polling for records..." id=source
+time="2023-01-26T17:16:15Z" level=debug msg="Polling for records..." id=destination
+time="2023-01-26T17:16:38Z" level=debug msg="Consumed 1 records" id=source
+time="2023-01-26T17:16:38Z" level=debug msg="Mapping topic name 'telemetryB' to 'telemetryC'" id=source
+time="2023-01-26T17:16:39Z" level=debug msg="Sent 1 records to 'destination'" id=source
+time="2023-01-26T17:16:39Z" level=debug msg="Committing offsets: {\"telemetryB\":{\"0\":{\"Epoch\":1,\"Offset\":1}}}" id=source
+time="2023-01-26T17:16:39Z" level=debug msg="Offsets committed" id=source
+time="2023-01-26T17:16:39Z" level=debug msg="Polling for records..." id=source
+...
 ```

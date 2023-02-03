@@ -4,8 +4,8 @@ source:
   bootstrap_servers: 172.24.1.10:9092 # use secured internal interface
   # List of outbound topics to push from source to destination
   topics:
-    - telemetry1
-    - telemetry2
+    - telemetryA
+    - telemetryB:telemetryC
   tls:
     enabled: true
     client_key: "/etc/redpanda/certs/agent.key"
@@ -17,8 +17,8 @@ destination:
   max_version: "3.0.0" # maximum kafka protocol version
   # List of inbound topics to pull from destination to source
   topics:
-    - config1
-    - config2
+    - configA
+    - _schemas
   tls:
     enabled: true
     client_key: "/etc/redpanda/certs/agent.key"
