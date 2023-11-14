@@ -7,7 +7,7 @@ networks:
         gateway: "172.24.1.1"
 services:
   redpanda_source:
-    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
+    image: docker.redpanda.com/redpandadata/redpanda:latest
     container_name: redpanda_source
     command:
       - redpanda
@@ -32,11 +32,12 @@ services:
     networks:
       redpanda_network:
         ipv4_address: "172.24.1.10"
+    entrypoint: /etc/redpanda/agent-entrypoint.sh
     volumes:
       - ./certs:/etc/redpanda/certs
       - ./redpanda-edge-agent:/usr/local/bin/redpanda-edge-agent
       - ./agent.yaml:/etc/redpanda/agent.yaml
-      - ./supervisor.conf:/etc/supervisord.conf
+      - ./agent-entrypoint.sh:/etc/redpanda/agent-entrypoint.sh
     ports:
       - "19092:19092"
       - "19644:9644"

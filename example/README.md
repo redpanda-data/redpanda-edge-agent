@@ -14,6 +14,7 @@ This [Docker Compose](.docker-compose-redpanda.yaml) file spins up a local envir
 
 ```bash
 cd example
+chmod +x agent-entrypoint.sh
 docker-compose -f docker-compose-redpanda.yaml up -d
 [+] Running 3/3
  ⠿ Network example_redpanda_network  Created
