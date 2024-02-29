@@ -1,4 +1,8 @@
-<div align="center"><h3>This is a <a href="https://github.com/redpanda-data/redpanda-labs">Redpanda Labs</a> project</h3></div>
+<div align="center">
+  <img width="15%" src="./redpanda_lab1.png" />
+  <br />
+  This is a <a href="https://github.com/redpanda-data/redpanda-labs">Redpanda Labs</a> project
+</div>
 
 # Redpanda Edge Agent
 
