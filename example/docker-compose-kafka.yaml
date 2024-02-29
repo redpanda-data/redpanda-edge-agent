@@ -16,8 +16,9 @@ services:
       - internal://0.0.0.0:9092,external://172.24.1.10:19092
       - --advertise-kafka-addr
       - internal://172.24.1.10:9092,external://127.0.0.1:19092
-      - --overprovisioned
-      - --check=false
+      - --smp 1
+      - --memory 1G
+      - --mode dev-container
       - --set redpanda.auto_create_topics_enabled=true
       - "--set redpanda.kafka_api_tls={\
           'name':'internal','enabled':true,'require_client_auth':true,\
