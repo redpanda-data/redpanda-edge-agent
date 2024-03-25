@@ -1,0 +1,54 @@
+services:
+  redpanda1:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.1
+    hostname: redpanda1
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda1:9092,OUTSIDE://localhost:19092
+      - --rpc-addr 0.0.0.0:33145
+      - --advertise-rpc-addr redpanda1:33145
+    ports:
+      - 19092:19092 # Kafka API port
+
+  redpanda2:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.1
+    # container_name: redpanda2
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:29092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda2:9092,OUTSIDE://localhost:29092
+      - --rpc-addr 0.0.0.0:33145
+      - --advertise-rpc-addr redpanda2:33145
+    ports:
+      - 29092:29092 # Kafka API port
+  
+  owl-shop:
+    image: golang:bookworm
+    environment:
+      - KAFKA_BROKERS=redpanda1:9092
+      - SHOP_TOPICREPLICATIONFACTOR=1
+      - SHOP_REQUESTRATE=1000
+      # - SHOP_TRAFFIC_INTERVAL_DURATION=1s
+    command:
+      - bash
+      - -c
+      - |
+        git clone https://github.com/cloudhut/owl-shop.git --depth 1
+        cd owl-shop
+        go run cmd/main.go
+      - --
+    depends_on:
+      - redpanda1
+    volumes:
+      - ./cache/go/pkg/mod:/go/pkg/mod
