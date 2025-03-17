@@ -7,7 +7,7 @@ networks:
         gateway: "172.24.1.1"
 services:
   redpanda_source:
-    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
+    image: 310638889487.dkr.ecr.us-west-2.amazonaws.com/docker.redpanda.com/redpandadata/redpanda:v24.3.5
     container_name: redpanda_source
     command:
       - redpanda
@@ -43,7 +43,7 @@ services:
       - "19644:9644"
       - "18081:8081"
   redpanda_destination:
-    image: docker.vectorized.io/vectorized/redpanda:v22.3.11
+    image: 310638889487.dkr.ecr.us-west-2.amazonaws.com/docker.redpanda.com/redpandadata/redpanda:v24.3.5
     container_name: redpanda_destination
     command:
       - redpanda
@@ -75,3 +75,4 @@ services:
       - "29092:29092"
       - "29644:9644"
       - "28081:8081"
+

@@ -55,10 +55,17 @@ func (d Direction) String() string {
 	}
 }
 
+type Config struct {
+	Topics map[byte]Topic
+}
+
 type Topic struct {
-	sourceName      string
-	destinationName string
-	direction       Direction
+	sourceName            string
+	destinationName       string
+	direction             Direction
+	destinationReplicas   int
+	destinationPartitions int
+	customPartitioning    bool
 }
 
 func (t Topic) String() string {
@@ -140,47 +147,45 @@ func InitConfig(path *string) {
 	if err := config.Load(file.Provider(*path), yaml.Parser()); err != nil {
 		log.Errorf("Error loading config: %v", err)
 	}
-	validate()
 	log.Debugf(config.Sprint())
+	validate()
+
 }
 
 // Parse topic configuration
-func parseTopics(topics []string, direction Direction) []Topic {
+func parseTopics(config *koanf.Koanf, direction Direction) []Topic {
 	var all []Topic
-	for _, t := range topics {
-		s := strings.Split(t, ":")
-		if len(s) == 1 {
-			all = append(all, Topic{
-				sourceName:      strings.TrimSpace(s[0]),
-				destinationName: strings.TrimSpace(s[0]),
-				direction:       direction,
-			})
-		} else if len(s) == 2 {
-			// Push from source topic to destination topic
-			var src = strings.TrimSpace(s[0])
-			var dst = strings.TrimSpace(s[1])
-			if direction == Pull {
-				// Pull from destination topic to source topic
-				src = strings.TrimSpace(s[1])
-				dst = strings.TrimSpace(s[0])
-			}
-			all = append(all, Topic{
-				sourceName:      src,
-				destinationName: dst,
-				direction:       direction,
-			})
-		} else {
-			log.Fatalf("Incorrect topic configuration: %s", t)
-		}
+	var topic Topic
+
+	configStr := "source.topics.topic"
+	if direction == Pull {
+		configStr = "destination.topics.topic"
 	}
+
+	i := 0
+	topicConfig := configStr + strconv.Itoa(i)
+
+	for config.String(topicConfig) != "" {
+		i++
+		topic.destinationName = config.String(topicConfig + ".destination")
+		log.Debugf("Discovered topic :%v", topic.destinationName)
+		topic.sourceName = config.String(topicConfig + ".source")
+		topic.destinationReplicas = config.Int(topicConfig + ".replicas")
+		topic.destinationPartitions = config.Int(topicConfig + ".partition_count")
+		topic.customPartitioning = config.Bool(topicConfig + ".custom_partitioning_enabled")
+		topicConfig = configStr + strconv.Itoa(i)
+		topic.direction = Push
+		all = append(all, topic)
+	}
+
 	return all
 }
 
 func GetTopics(p Prefix) []Topic {
 	if p == Source {
-		return parseTopics(config.Strings("source.topics"), Push)
+		return parseTopics(config, Push)
 	} else {
-		return parseTopics(config.Strings("destination.topics"), Pull)
+		return parseTopics(config, Pull)
 	}
 }
 
