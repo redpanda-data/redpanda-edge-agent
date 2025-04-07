@@ -71,8 +71,24 @@ source:
     #     to a topic with a different name on the destination cluster
     #     (e.g. "telemetryB:telemetryC").
     topics:
-        - telemetryA
-        - telemetryB:telemetryC
+        topic0:
+            destination: "_schemas"
+            source: "_schemas"
+            partition_count: 1
+            replicas: 1
+            custom_partitioning_enabled: false
+        topic1:
+            destination: "telemetryA"
+            source: "telemetryA"
+            partition_count: 10
+            replicas: 1
+            custom_partitioning_enabled: false
+        topic2:
+            destination: "telemetryC"
+            source: "telemetryB"
+            partition_count: 10
+            replicas: 1
+            custom_partitioning_enabled: true
     # Set the consumer group for the agent to join and consume in. Defaults to
     # the agent id if not set.
     consumer_group_id: ""
@@ -105,8 +121,18 @@ destination:
     #     to a topic with a different name on the source cluster
     #     (e.g. "configB:configC").
     topics:
-        - configA
-        - configB:configC
+        topic0:
+            destination: "configA"
+            source: "configA"
+            partition_count: 1
+            replicas: 1
+            custom_partitioning_enabled: false
+        topic1:
+            destination: "configC"
+            source: "configB"
+            partition_count: 1
+            replicas: 1
+            custom_partitioning_enabled: false
     # Set the consumer group for the agent to join and consume in. Defaults to
     # the agent id if not set.
     consumer_group_id: ""
