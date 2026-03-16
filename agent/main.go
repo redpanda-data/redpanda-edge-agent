@@ -231,6 +231,21 @@ func logWithId(lvl string, id string, msg string) {
 	}
 }
 
+// func rotate(nums []int, k int) []int {
+//     if k < 0 || len(nums) == 0 {
+//         return nums
+//     }
+
+//     fmt.Printf("nums %p array %p len %d cap %d slice %v\n", &nums, &nums[0], len(nums), cap(nums), nums)
+
+//     r := len(nums) - k%len(nums)
+//     nums = append(nums[r:], nums[:r]...)
+
+//     fmt.Printf("nums %p array %p len %d cap %d slice %v\n", &nums, &nums[0], len(nums), cap(nums), nums)
+
+//     return nums
+// }
+
 // Continuously fetch batches of records from the `src` cluster and forward
 // them to the `dst` cluster. Consumer offsets are only committed when the
 // `dst` cluster acknowledges the records.
@@ -244,61 +259,132 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 		fmt.Sprintf("Forwarding records from '%s' to '%s'", src.name, dst.name))
 
 	topicMap := make(map[string]string)
+	topicsData := make(map[string][]*kgo.Record)
 	for _, t := range AllTopics() {
 		topicMap[t.consumeFrom()] = t.produceTo()
+		topicsData[t.consumeFrom()] = []*kgo.Record{}
 	}
 
-	for {
-		if (sent && committed) || len(fetches.Records()) == 0 {
-			// Only poll when the previous fetches were successfully
-			// sent and committed
-			logWithId("debug", src.name, "Polling for records...")
-			fetches = src.client.PollRecords(
-				ctx, config.Int("max_poll_records"))
-			if errs := fetches.Errors(); len(errs) > 0 {
-				for _, e := range errs {
-					if e.Err == context.Canceled {
-						logWithId("info", src.name,
-							fmt.Sprintf("Received interrupt: %s", e.Err))
-						return
-					}
-					logWithId("error", src.name,
-						fmt.Sprintf("Fetch error: %s", e.Err))
+	var dataMutex sync.Mutex
+	
+
+	topicsPriority := [][]string{{"owlshop-orders"},{"owlshop-frontend-events"}}
+
+	go func() {
+		for {
+			resumed := false
+			dataMutex.Lock()
+			for topicName, topicRecords := range topicsData {
+				if len(topicRecords) <= 1024 {
+					src.client.ResumeFetchTopics(topicName)
+					resumed = true
+				} else {
+					src.client.PauseFetchTopics(topicName)
 				}
-				backoff(&errCount)
 			}
-			if len(fetches.Records()) > 0 {
-				logWithId("debug", src.name,
-					fmt.Sprintf("Consumed %d records", len(fetches.Records())))
-				iter := fetches.RecordIter()
-				for !iter.Done() {
-					record := iter.Next()
-					// Change the topic name if necessary
-					changeName := topicMap[record.Topic]
-					if changeName != "" {
-						logWithId("trace", src.name,
-							fmt.Sprintf("Mapping topic name '%s' to '%s'",
-								record.Topic, changeName))
-						record.Topic = changeName
-					}
-					// If the record key is empty, then set it to the agent id to
-					// route the records to the same topic partition.
-					if record.Key == nil {
-						record.Key = []byte(config.String("id"))
-					}
-				}
-				sent = false
-				committed = false
-			} else {
-				// No records, skip iteration and poll for more records
+			dataMutex.Unlock()
+			if ! resumed {
+				logWithId("info", src.name, "Sleeping")
+				time.Sleep(1 * time.Second)
 				continue
 			}
+
+			// if sent && committed  || len(fetches.Records()) == 0 {
+				// Only poll when the previous fetches were successfully
+				// sent and committed
+				logWithId("info", src.name, "Polling for records...")
+				fetches = src.client.PollRecords(
+					ctx, config.Int("max_poll_records"))
+				logWithId("info", src.name, "Here")
+				if errs := fetches.Errors(); len(errs) > 0 {
+					for _, e := range errs {
+						if e.Err == context.Canceled {
+							logWithId("info", src.name,
+								fmt.Sprintf("Received interrupt: %s", e.Err))
+							return
+						}
+						logWithId("error", src.name,
+							fmt.Sprintf("Fetch error: %s", e.Err))
+					}
+					backoff(&errCount)
+				}
+				if len(fetches.Records()) > 0 {
+					logWithId("info", src.name,
+						fmt.Sprintf("Consumed %d records", len(fetches.Records())))
+					iter := fetches.RecordIter()
+					for !iter.Done() {
+						record := iter.Next()
+						// Change the topic name if necessary
+						changeName := topicMap[record.Topic]
+						if changeName != "" {
+							logWithId("trace", src.name,
+								fmt.Sprintf("Mapping topic name '%s' to '%s'",
+									record.Topic, changeName))
+							record.Topic = changeName
+						}
+						// If the record key is empty, then set it to the agent id to
+						// route the records to the same topic partition.
+						if record.Key == nil {
+							record.Key = []byte(config.String("id"))
+						}
+					}
+					
+					for _, fetch := range fetches {
+						for _, topic := range fetch.Topics {
+							for _, partition := range topic.Partitions {
+								dataMutex.Lock()
+								topicsData[topic.Topic] = append(topicsData[topic.Topic], partition.Records...)
+								dataMutex.Unlock()
+								logWithId("info", src.name, fmt.Sprintf("topic %s got %d more records", topic.Topic, len(partition.Records)))
+							}
+						}
+					}
+
+					sent = false
+					committed = false
+				}
+			// }
 		}
+	}()
+
+	for {
+		var records []*kgo.Record
+		recordsMaxSizeBytes := 1024 * 128
+		recordsSizeBytes := 0
+
+		for priority, priorityGroup := range topicsPriority {
+			// TODO: randomize this / rotate this / round-robin this across each call
+			for _, topicName := range priorityGroup {
+				recordIndex := 0
+				dataMutex.Lock()
+				topicRecords := topicsData[topicName]
+				dataMutex.Unlock()
+				for _, record := range topicRecords {
+					if recordsSizeBytes < recordsMaxSizeBytes {
+						// TODO: only if we actually send and commit
+						records = append(records, record)
+						recordsSizeBytes += len(record.Value)
+						recordIndex += 1
+					}
+				}
+				if recordIndex != 0 {
+					logWithId("info", src.name, fmt.Sprintf("added %d records from topic %s with priority %d", recordIndex, topicName, priority))
+					dataMutex.Lock()
+					topicsData[topicName] = topicsData[topicName][recordIndex:]
+					dataMutex.Unlock()
+				}
+			}
+		}
+		if (recordsSizeBytes <= 0) {
+			continue
+		}
+		logWithId("info", src.name, fmt.Sprintf("quantum is %d bytes", recordsSizeBytes))
+		logWithId("info", src.name, "done")
 
 		if !sent && !committed {
 			// Send records to destination
 			err := dst.client.ProduceSync(
-				ctx, fetches.Records()...).FirstErr()
+				ctx, records...).FirstErr()
 			if err != nil {
 				if err == context.Canceled {
 					logWithId("info", src.name,
@@ -307,25 +393,27 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 				}
 				logWithId("error", src.name,
 					fmt.Sprintf("Unable to send %d record(s) to %s: %s",
-						len(fetches.Records()), dst.name, err.Error()))
+						len(records), dst.name, err.Error()))
 				backoff(&errCount)
 			} else {
 				sent = true
 				logWithId("debug", src.name,
 					fmt.Sprintf("Sent %d records to %s",
-						len(fetches.Records()), dst.name))
+						len(records), dst.name))
 			}
 		}
 
 		if sent && !committed {
 			// Records have been sent successfully, so commit offsets
-			if log.GetLevel() == log.TraceLevel {
-				offsets := src.client.UncommittedOffsets()
-				offsetsJson, _ := json.Marshal(offsets)
-				logWithId("trace", src.name,
-					fmt.Sprintf("Committing offsets: %s", string(offsetsJson)))
-			}
-			err := src.client.CommitUncommittedOffsets(ctx)
+			// if log.GetLevel() == log.TraceLevel {
+			// 	offsets := src.client.UncommittedOffsets()
+			// 	offsetsJson, _ := json.Marshal(offsets)
+			// 	logWithId("trace", src.name,
+			// 		fmt.Sprintf("Committing offsets: %s", string(offsetsJson)))
+			// }
+			var err error
+			// err := src.client.CommitRecords(ctx, records...)
+			// err := src.client.CommitUncommittedOffsets(ctx)
 			if err != nil {
 				if err == context.Canceled {
 					logWithId("info", src.name,

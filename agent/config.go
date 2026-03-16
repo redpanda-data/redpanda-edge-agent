@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
@@ -127,7 +128,7 @@ var defaultID = func() string {
 		log.Fatalf("Unable to get hostname from kernel. Set Id in config")
 	}
 	log.Debugf("Hostname: %s", hostname)
-	return hostname
+	return hostname + uuid.NewString()
 }()
 
 // Initialize the agent configuration from the provided .yaml file

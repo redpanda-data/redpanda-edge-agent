@@ -1,0 +1,11 @@
+create_topics: true
+source:
+    name: "source"
+    bootstrap_servers: 127.0.0.1:19092
+    topics:
+        - owlshop-frontend-events
+        - owlshop-orders
+
+destination:
+    name: "destination"
+    bootstrap_servers: 127.0.0.1:29092
