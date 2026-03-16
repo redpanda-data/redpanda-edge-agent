@@ -244,8 +244,10 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 		fmt.Sprintf("Forwarding records from '%s' to '%s'", src.name, dst.name))
 
 	topicMap := make(map[string]string)
+	partitionMap := make(map[string]int)
 	for _, t := range AllTopics() {
 		topicMap[t.consumeFrom()] = t.produceTo()
+		partitionMap[t.produceTo()] = t.destinationPartitions
 	}
 
 	for {
@@ -296,24 +298,30 @@ func forwardRecords(src *Redpanda, dst *Redpanda, ctx context.Context) {
 		}
 
 		if !sent && !committed {
+			//Calculate Partition using murmur hash on key mod # of partitions
 			// Send records to destination
-			err := dst.client.ProduceSync(
-				ctx, fetches.Records()...).FirstErr()
-			if err != nil {
-				if err == context.Canceled {
-					logWithId("info", src.name,
-						fmt.Sprintf("Received interrupt: %s", err.Error()))
-					return
+			iter := fetches.RecordIter()
+			for !iter.Done() {
+				record := iter.Next()
+				//Calculate Partition using murmur hash on key mod # of partitions
+				partition := Murmur2Partition(record.Key, int32(partitionMap[record.Topic]))
+				record.Partition = partition
+				err := dst.client.ProduceSync(
+					ctx, record).FirstErr()
+				if err != nil {
+					if err == context.Canceled {
+						logWithId("info", src.name,
+							fmt.Sprintf("Received interrupt: %s", err.Error()))
+						return
+					}
+					logWithId("error", src.name,
+						fmt.Sprintf("Unable to send %d record(s) to %s: %s", 1, dst.name, err.Error()))
+					backoff(&errCount)
+				} else {
+					sent = true
+					logWithId("debug", src.name,
+						fmt.Sprintf("Sent %d records to %s", 1, dst.name))
 				}
-				logWithId("error", src.name,
-					fmt.Sprintf("Unable to send %d record(s) to %s: %s",
-						len(fetches.Records()), dst.name, err.Error()))
-				backoff(&errCount)
-			} else {
-				sent = true
-				logWithId("debug", src.name,
-					fmt.Sprintf("Sent %d records to %s",
-						len(fetches.Records()), dst.name))
 			}
 		}
 
@@ -379,4 +387,59 @@ func main() {
 	stop()
 	shutdown()
 	log.Infoln("Agent stopped")
+}
+
+func Murmur2Partition(bytes []byte, numPartitions int32) int32 {
+	hash := MurmurHash2(bytes)
+	partition := positive(hash) % numPartitions
+	return partition
+}
+
+// From https://github.com/apache/kafka/blob/0.10.1/clients/src/main/java/org/apache/kafka/common/utils/Utils.java#L728
+func positive(v int32) int32 {
+	return v & 0x7fffffff
+}
+
+func MurmurHash2(data []byte) (h int32) {
+	const (
+		M = 0x5bd1e995
+		R = 24
+		// From https://github.com/apache/kafka/blob/0.10.1/clients/src/main/java/org/apache/kafka/common/utils/Utils.java#L342
+		seed = int32(-1756908916)
+	)
+
+	var k int32
+
+	h = seed ^ int32(len(data))
+
+	// Mix 4 bytes at a time into the hash
+	for l := len(data); l >= 4; l -= 4 {
+		k = int32(data[0]) | int32(data[1])<<8 | int32(data[2])<<16 | int32(data[3])<<24
+		k *= M
+		k ^= int32(uint32(k) >> R) // To match Kafka Impl
+		k *= M
+		h *= M
+		h ^= k
+		data = data[4:]
+	}
+
+	// Handle the last few bytes of the input array
+	switch len(data) {
+	case 3:
+		h ^= int32(data[2]) << 16
+		fallthrough
+	case 2:
+		h ^= int32(data[1]) << 8
+		fallthrough
+	case 1:
+		h ^= int32(data[0])
+		h *= M
+	}
+
+	// Do a few final mixes of the hash to ensure the last few bytes are well incorporated
+	h ^= int32(uint32(h) >> 13)
+	h *= M
+	h ^= int32(uint32(h) >> 15)
+
+	return
 }
